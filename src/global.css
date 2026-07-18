@@ -15,3 +15,11 @@
 html, body, #root {
   background-color: #f8f7f5;
 }
+
+/* react-native-web pins body to the viewport height with overflow:hidden,
+   which blocks normal page scrolling once content is taller than the screen. */
+body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
