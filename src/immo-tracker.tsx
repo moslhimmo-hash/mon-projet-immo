@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 // ─── STORAGE HELPERS ───────────────────────────────────────────────────────────
-const STORAGE_KEY = "immo-tracker-v1";
+const STORAGE_KEY = "immo-tracker-v2";
 
 async function loadData() {
   try {
@@ -14,142 +14,638 @@ async function saveData(data) {
   try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
 
+function uid() {
+  return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const PROFILES = [
-  { id: "vendeur", label: "Vendeur", icon: "🏷️", desc: "Je vends uniquement" },
-  { id: "acheteur", label: "Acheteur", icon: "🔑", desc: "J'achète uniquement" },
-  { id: "les-deux", label: "Vente + Achat", icon: "🔄", desc: "Je vends pour acheter" },
-  { id: "investisseur", label: "Investisseur", icon: "📈", desc: "Investissement locatif" },
+const PROJECT_TYPES = [
+  { id: "achat-rp", label: "Achat résidence principale", icon: "🏡", desc: "Acheter mon logement" },
+  { id: "vente", label: "Vente", icon: "🏷️", desc: "Vendre un bien" },
+  { id: "vente-achat", label: "Vente + Achat", icon: "🔄", desc: "Vendre pour acheter" },
+  { id: "investissement-locatif", label: "Investissement locatif", icon: "📈", desc: "Acheter pour louer" },
+  { id: "construction", label: "Construction", icon: "🏗️", desc: "Faire construire" },
+  { id: "location", label: "Location", icon: "🔑", desc: "Gérer une location" },
+  { id: "mise-en-location", label: "Mise en location", icon: "📋", desc: "Trouver un locataire" },
+  { id: "travaux", label: "Travaux", icon: "🔨", desc: "Rénover ou aménager" },
+  { id: "renovation-energetique", label: "Rénovation énergétique", icon: "🌱", desc: "Améliorer le DPE" },
+  { id: "sci", label: "SCI", icon: "🏢", desc: "Créer une société civile" },
+  { id: "lmnp", label: "LMNP", icon: "🛋️", desc: "Location meublée non pro" },
 ];
 
-const STEPS_BY_PROFILE = {
-  vendeur: [
-    { id: "v1", phase: "Préparation", label: "Estimer le bien (2-3 agences + outils en ligne)", month: "M1",
-      info: { title: "Comment estimer son bien ?", body: "Faites appel à 2-3 agences locales pour des estimations gratuites et sans engagement. Complétez avec des outils en ligne : MeilleursAgents, Meelo, PAP.fr. L'estimation finale doit croiser ces sources. Évitez de surestimer : un bien trop cher reste sur le marché et se déprécie aux yeux des acheteurs.", contacts: ["Agences immobilières locales (sans engagement)", "MeilleursAgents.com", "Meelo.com", "PAP.fr — outil gratuit d'estimation"] } },
-    { id: "v2", phase: "Préparation", label: "Choisir le mode de vente (agence ou PAP)", month: "M1",
-      info: { title: "Agence ou particulier à particulier ?", body: "En agence : commission de 3 à 8% du prix de vente, mais accompagnement complet (annonce, visites, négociation, paperasse). En PAP (particulier à particulier) : aucune commission, mais vous gérez tout. Si vous manquez de temps ou d'expérience, l'agence est souvent rentable malgré sa commission.", contacts: ["SeLoger, LeBonCoin, PAP.fr pour le PAP", "IAD, Efficity pour les agences en ligne (commission réduite ~3%)", "Agences physiques locales pour un accompagnement complet"] } },
-    { id: "v3", phase: "Préparation", label: "Réunir les diagnostics obligatoires (DPE, Carrez…)", month: "M1",
-      info: { title: "Diagnostics obligatoires à la vente", body: "La loi impose une liste de diagnostics avant toute vente. Comptez 400 à 700€ pour un pack complet. Ils doivent être réalisés par un diagnostiqueur certifié. Le DPE (performance énergétique) est particulièrement scruté depuis 2023 : un bien F ou G peut impacter le prix.", contacts: ["Diagnostiqueur certifié (trouvez-en un sur diagnostiqueurs.gouv.fr)", "Votre agence immobilière peut recommander un prestataire", "Budget estimé : 400-700€ pour un appartement"] } },
-    { id: "v4", phase: "Préparation", label: "Faire des photos professionnelles", month: "M1",
-      info: { title: "Pourquoi des photos pro ?", body: "Les biens avec photos professionnelles se vendent en moyenne 30% plus vite et obtiennent plus de visites. Un photographe immobilier coûte 100 à 250€ mais c'est un investissement rentable. Pensez aussi à ranger et dépersonnaliser le bien avant la séance.", contacts: ["Photographes immobiliers indépendants (recherchez sur Google ou Malt)", "Certaines agences incluent les photos dans leur prestation", "Budget : 100-250€ selon la surface"] } },
-    { id: "v5", phase: "Mise en vente", label: "Publier l'annonce en ligne (SeLoger, LBC, PAP…)", month: "M2",
-      info: { title: "Bien diffuser son annonce", body: "Multipliez les portails pour maximiser la visibilité : SeLoger et Logic-Immo pour les acheteurs actifs, LeBonCoin pour le grand public, PAP.fr si vous vendez entre particuliers. Soignez le titre, décrivez les points forts (luminosité, étage, transports), et mentionnez le DPE.", contacts: ["SeLoger.com", "LeBonCoin Immo", "PAP.fr (sans commission)", "Logic-Immo.com", "Bien'ici.com"] } },
-    { id: "v6", phase: "Mise en vente", label: "Organiser les visites", month: "M2",
-      info: { title: "Comment bien préparer les visites ?", body: "Proposez des créneaux fixes en semaine et le week-end. Rangez, aérez, maximisez la lumière naturelle. Préparez un dossier avec les diagnostics, les charges de copro et le montant de la taxe foncière. Restez disponible pour répondre aux questions sans pression.", contacts: ["Votre agence gère les visites si vous avez signé un mandat", "En PAP : prévoyez 1h par visite, soyez ponctuel et neutre"] } },
-    { id: "v7", phase: "Mise en vente", label: "Analyser et négocier les offres", month: "M2-3",
-      info: { title: "Comment évaluer une offre ?", body: "Ne regardez pas seulement le prix : vérifiez que l'acheteur a un financement solide (accord de principe bancaire ou achat comptant). Une offre à 95% du prix avec un dossier béton vaut souvent mieux qu'une offre pleine avec un dossier fragile. Vous pouvez contre-proposer par écrit.", contacts: ["Votre notaire peut vous conseiller sur la solidité d'une offre", "Votre agence négocie en votre nom si mandat exclusif"] } },
-    { id: "v8", phase: "Compromis", label: "Signer le compromis de vente", month: "M3",
-      info: { title: "Qu'est-ce que le compromis ?", body: "Le compromis (ou promesse synallagmatique) engage vendeur ET acheteur. Il fixe le prix, les conditions suspensives (obtention du prêt, absence de servitude…) et la date de signature de l'acte définitif. Il est rédigé par le notaire ou l'agence. Lisez-le attentivement avant de signer.", contacts: ["Votre notaire (obligatoire pour l'acte définitif, recommandé dès le compromis)", "L'agence immobilière peut rédiger le compromis", "Délai habituel entre compromis et acte : 2 à 3 mois"] } },
-    { id: "v9", phase: "Compromis", label: "Suivre le délai de rétractation (10 jours)", month: "M3",
-      info: { title: "Le délai de rétractation de l'acheteur", body: "Après signature du compromis, l'acheteur dispose de 10 jours calendaires pour se rétracter sans justification ni pénalité (loi SRU). Vous, en tant que vendeur, n'avez pas ce droit. Pendant ces 10 jours, ne retirez pas votre annonce et ne signez rien avec un autre acheteur.", contacts: ["Votre notaire vous informera de la date exacte de fin du délai", "Aucune démarche particulière de votre côté pendant ce délai"] } },
-    { id: "v10", phase: "Compromis", label: "Suivre la condition suspensive de prêt acheteur (45-60j)", month: "M3-4",
-      info: { title: "La condition suspensive de prêt", body: "Si l'acheteur finance par emprunt, le compromis inclut une condition suspensive : si son prêt est refusé, la vente est annulée et son dépôt de garantie lui est restitué. Ce délai est généralement de 45 à 60 jours. Restez en contact avec votre notaire pour suivre l'avancement.", contacts: ["Votre notaire suit l'obtention du prêt de l'acheteur", "Si le prêt est refusé : votre notaire vous accompagne pour la suite"] } },
-    { id: "v11", phase: "Finalisation", label: "Préparer l'acte définitif avec le notaire", month: "M4",
-      info: { title: "L'acte authentique de vente", body: "Le notaire rédige l'acte définitif à partir du compromis et des documents fournis. Il vérifie les titres de propriété, purge les hypothèques et calcule les frais. Vous recevrez une convocation avec la date de signature. Prévoyez d'apporter toutes les clés et documents le jour J.", contacts: ["Votre notaire (vous pouvez avoir le vôtre, l'acheteur le sien — les frais ne sont pas doublés)", "Prévoyez le remboursement du capital restant dû directement le jour de la signature"] } },
-    { id: "v12", phase: "Finalisation", label: "Signer l'acte de vente définitif", month: "M4",
-      info: { title: "Le jour de la signature", body: "La signature se fait chez le notaire. Le prix vous est versé par virement le jour même ou le lendemain. Vous remettez les clés à l'acheteur. L'acte est lu intégralement — prévoyez 1h à 2h. Pensez à relever les compteurs (eau, gaz, électricité) la veille.", contacts: ["Votre notaire coordonne tout", "Apportez une pièce d'identité valide", "Le virement du produit net de vente arrive sous 24-48h"] } },
-    { id: "v13", phase: "Finalisation", label: "Résilier contrats (EDF, gaz, internet, assurance)", month: "M4",
-      info: { title: "Résiliation et transfert des contrats", body: "Résiliez ou transférez vos contrats à la date de signature. EDF/Engie : résiliation en ligne avec relevé du compteur. Internet : préavis de 30 jours pour la plupart des opérateurs. Assurance habitation : résiliation immédiate possible lors d'un déménagement.", contacts: ["EDF : edf.fr ou 09 69 32 15 15", "Engie, Free, SFR, Orange, Bouygues : espaces clients en ligne", "Assurance : votre assureur actuel (résiliation loi Hamon possible à tout moment après 1 an)"] } },
-    { id: "v14", phase: "Finalisation", label: "Effectuer le changement d'adresse officiel", month: "M4",
-      info: { title: "Changement d'adresse : ne rien oublier", body: "Utilisez le service gratuit Service-Public.fr (changement d'adresse mutualisé) pour notifier en une fois : impôts, CAF, Pôle emploi, carte grise. N'oubliez pas votre banque, médecin, employeur, abonnements. La Poste propose une redirection du courrier payante.", contacts: ["Service-Public.fr — changement d'adresse en ligne (gratuit)", "La Poste — redirection de courrier (payant)", "Impôts.gouv.fr, Ameli.fr, CAF.fr à mettre à jour séparément"] } },
-  ],
-  acheteur: [
-    { id: "a1", phase: "Préparation", label: "Calculer son budget et capacité d'emprunt", month: "M1",
-      info: { title: "Comment calculer sa capacité d'emprunt ?", body: "La règle de base : vos mensualités de crédit ne doivent pas dépasser 35% de vos revenus nets. Utilisez l'onglet Finances de cette app pour une simulation rapide. Pensez à intégrer les frais de notaire (7,5% dans l'ancien, 2,5% dans le neuf) dans votre budget global.", contacts: ["Votre conseiller bancaire pour une première estimation", "Un courtier immobilier pour comparer plusieurs banques (gratuit pour vous)", "CAFPI, Meilleurtaux, Vousfinancer, Pretto (en ligne)"] } },
-    { id: "a2", phase: "Préparation", label: "Consulter un courtier immobilier", month: "M1",
-      info: { title: "Pourquoi passer par un courtier ?", body: "Le courtier est rémunéré par la banque, pas par vous. Il compare des dizaines d'offres et négocie les taux, les frais de dossier et l'assurance emprunteur. Il peut vous faire économiser plusieurs dizaines de milliers d'euros sur la durée du prêt. Consultez-le dès le début, même avant d'avoir trouvé un bien.", contacts: ["CAFPI — cafpi.fr", "Meilleurtaux — meilleurtaux.com", "Vousfinancer — vousfinancer.com", "Pretto — pretto.fr (100% en ligne)", "Courtier indépendant local"] } },
-    { id: "a3", phase: "Préparation", label: "Obtenir un accord de principe bancaire", month: "M1",
-      info: { title: "L'accord de principe : un atout majeur", body: "L'accord de principe est une lettre de votre banque confirmant que votre dossier est finançable pour un montant donné. Il rassure fortement les vendeurs. Avec ce document, vos offres sont prises plus au sérieux face à des acheteurs sans financement confirmé.", contacts: ["Votre conseiller bancaire principal", "Votre courtier immobilier (il peut obtenir cet accord auprès de plusieurs banques)"] } },
-    { id: "a4", phase: "Recherche", label: "Définir ses critères (surface, zone, transports…)", month: "M1",
-      info: { title: "Bien cadrer sa recherche", body: "Distinguez vos critères impératifs (surface mini, nb de pièces, accès transports) de vos critères souhaitables (étage, balcon, parking). Pensez aussi au DPE : les biens F/G peuvent être difficiles à revendre ou louer à l'avenir.", contacts: ["Bien'ici.com — carte interactive avec filtres avancés", "SeLoger, PAP.fr, LeBonCoin pour affiner par critères", "Google Maps pour évaluer les quartiers et transports"] } },
-    { id: "a5", phase: "Recherche", label: "Lancer les recherches actives (SeLoger, PAP, LBC…)", month: "M1-2",
-      info: { title: "Comment optimiser sa recherche ?", body: "Créez des alertes email sur tous les portails pour être notifié dès qu'un bien correspond. Contactez aussi des agences locales directement : certains biens ne sont jamais publiés en ligne (off-market). Rejoignez des groupes Facebook locaux d'achat/vente immobilière.", contacts: ["SeLoger.com — alertes email", "PAP.fr — particulier à particulier (sans frais d'agence)", "LeBonCoin Immo", "Bien'ici.com", "Agences locales à contacter directement"] } },
-    { id: "a6", phase: "Recherche", label: "Organiser et effectuer les visites", month: "M2",
-      info: { title: "Ce qu'il faut vérifier en visite", body: "Au-delà du coup de cœur : vérifiez l'état des fenêtres, de la plomberie, du tableau électrique. Testez les robinets, regardez les plafonds (taches = infiltrations). Dans une copro, observez l'entretien des parties communes. Demandez le montant des charges et la date du dernier ravalement.", contacts: ["Prévoyez un mètre ruban et une lampe torche", "Si vous avez un doute structurel : expert bâtiment (200-500€)", "Association AQC pour trouver un expert — qualiteconstruction.com"] } },
-    { id: "a7", phase: "Recherche", label: "Vérifier PV d'AG, charges, état de la copro", month: "M2",
-      info: { title: "L'importance des documents de copro", body: "Les 3 derniers PV d'Assemblée Générale révèlent les travaux votés (à votre charge si vous achetez), les litiges en cours, et l'état financier de la copro. Des impayés importants ou des travaux votés peuvent représenter des dizaines de milliers d'euros supplémentaires.", contacts: ["Ces documents doivent vous être remis par le vendeur avant le compromis (loi ALUR)", "Demandez-les systématiquement avant toute offre", "Votre notaire peut vous aider à les analyser"] } },
-    { id: "a8", phase: "Offre", label: "Faire une offre d'achat écrite", month: "M2-3",
-      info: { title: "Comment formuler une offre ?", body: "L'offre doit être écrite et mentionner : le prix proposé, les modalités de financement, et une date limite de réponse (48-72h). Appuyez-vous sur les prix du marché local pour justifier votre proposition.", contacts: ["PAP.fr — modèle d'offre d'achat gratuit en ligne", "Votre agent immobilier transmet l'offre au vendeur", "DVF (data.gouv.fr) — prix de vente réels dans le secteur"] } },
-    { id: "a9", phase: "Offre", label: "Négocier le prix", month: "M3",
-      info: { title: "Les bons arguments pour négocier", body: "Appuyez-vous sur des faits : prix au m² du secteur, durée de mise en vente du bien, travaux à prévoir, DPE dégradé. Un bien qui stagne depuis 3 mois+ est souvent négociable. En revanche, un bien récent avec plusieurs visites l'est peu.", contacts: ["MeilleursAgents.com — prix au m² par quartier", "DVF — transactions réelles sur data.gouv.fr", "Votre agent immobilier peut négocier en votre nom"] } },
-    { id: "a10", phase: "Compromis", label: "Signer le compromis de vente", month: "M3",
-      info: { title: "Le compromis côté acheteur", body: "Vous disposez de 10 jours pour vous rétracter après signature, sans pénalité. Passé ce délai, si vous renoncez (hors condition suspensive de prêt refusé), vous perdez le dépôt de garantie (5-10% du prix). Lisez attentivement les conditions suspensives.", contacts: ["Votre notaire rédige et explique chaque clause", "Vous pouvez avoir votre propre notaire (les frais ne sont pas doublés)", "Délai habituel entre compromis et acte : 2 à 3 mois"] } },
-    { id: "a11", phase: "Financement", label: "Déposer le dossier complet à la banque / courtier", month: "M3",
-      info: { title: "Constituer un dossier béton", body: "Un dossier complet accélère l'obtention du prêt. Préparez : 3 derniers bulletins de salaire, 2 derniers avis d'imposition, 3 derniers relevés bancaires, pièce d'identité, justificatif de domicile, compromis signé, justificatifs d'épargne. Évitez les découverts dans les 3 mois précédents.", contacts: ["Votre courtier centralise et optimise votre dossier", "Votre conseiller bancaire principal", "Délai d'obtention du prêt : 3 à 6 semaines après dépôt complet"] } },
-    { id: "a12", phase: "Financement", label: "Obtenir l'offre de prêt officielle", month: "M4",
-      info: { title: "L'offre de prêt : ce qu'il faut vérifier", body: "Vérifiez : le TAEG (taux global incluant assurance et frais), le coût total du crédit, les conditions de remboursement anticipé, et les garanties exigées (hypothèque ou caution). Comparez plusieurs offres si possible.", contacts: ["Votre courtier compare les offres pour vous", "ANIL — anil.org — conseils gratuits", "UFC-Que Choisir pour comprendre les clauses"] } },
-    { id: "a13", phase: "Financement", label: "Respecter le délai légal de 11 jours avant acceptation", month: "M4",
-      info: { title: "Le délai de réflexion obligatoire", body: "La loi impose un délai incompressible de 11 jours après réception de l'offre de prêt avant de pouvoir l'accepter. Ce délai vous protège et ne peut pas être raccourci. Acceptez l'offre par courrier signé à partir du 12e jour. L'offre est valable 30 jours.", contacts: ["Votre banque ou courtier vous guidera sur la procédure", "Envoyez votre acceptation en recommandé avec accusé de réception"] } },
-    { id: "a14", phase: "Finalisation", label: "Signer l'acte authentique d'achat", month: "M5",
-      info: { title: "Le jour de la signature", body: "La signature se fait chez le notaire. Vous versez le solde du prix et les frais de notaire. La banque vire les fonds directement au notaire. L'acte est lu — prévoyez 1h à 2h. Vous repartez avec les clés !", contacts: ["Votre notaire coordonne tout avec la banque", "Apportez une pièce d'identité valide", "Les fonds sont virés par la banque au notaire avant la signature"] } },
-    { id: "a15", phase: "Finalisation", label: "Souscrire assurance habitation + assurance emprunteur", month: "M5",
-      info: { title: "Assurance habitation et emprunteur", body: "L'assurance habitation est indispensable. L'assurance emprunteur est exigée par la banque. Vous pouvez choisir librement votre assureur (délégation d'assurance) — c'est souvent 30 à 50% moins cher qu'en passant par la banque. Vous pouvez changer à tout moment (loi Lemoine, 2022).", contacts: ["Comparateurs : LeLynx.fr, AssurLand.com", "Délégation d'assurance emprunteur : April, Cardif, Generali…", "Loi Lemoine : changement d'assurance possible à tout moment"] } },
-    { id: "a16", phase: "Finalisation", label: "Récupérer les clés 🎉", month: "M5",
-      info: { title: "Félicitations, vous êtes propriétaire !", body: "À la sortie de l'étude, vous récupérez les clés et l'acte de vente. Photographiez le bien dès votre arrivée, changez les serrures, et souscrivez vos contrats d'énergie et internet dès que possible.", contacts: ["Changement de serrures : serrurier local (200-400€)", "EDF/Engie/Total Énergie pour les contrats d'énergie", "Opérateurs internet : Free, Orange, SFR, Bouygues"] } },
-  ],
-  investisseur: [
-    { id: "i1", phase: "Stratégie", label: "Définir la stratégie (location nue, meublée, coloc…)", month: "M1",
-      info: { title: "Quelle stratégie locative choisir ?", body: "Location nue : bail 3 ans, fiscalité au réel ou micro-foncier, locataires stables. Location meublée (LMNP) : bail 1 an, fiscalité avantageuse (amortissements déductibles), loyers plus élevés. Colocation : rendement plus élevé mais gestion plus intensive.", contacts: ["Conseiller fiscal ou expert-comptable spécialisé en immobilier", "ANIL — anil.org — information gratuite", "Votre notaire pour le choix de la structure juridique"] } },
-    { id: "i2", phase: "Stratégie", label: "Calculer le rendement locatif brut et net cible", month: "M1",
-      info: { title: "Comment calculer le rendement ?", body: "Rendement brut = (loyer annuel / prix d'achat) × 100. Rendement net = ((loyer annuel - charges annuelles) / prix d'achat) × 100. Visez au moins 4% net en Île-de-France. Utilisez l'onglet Finances de cette app pour simuler.", contacts: ["Simulateurs : rendement-locatif.com", "Expert-comptable pour affiner les projections fiscales", "Votre courtier pour optimiser le financement"] } },
-    { id: "i3", phase: "Stratégie", label: "Choisir la structure (nom propre, SCI, LMNP…)", month: "M1",
-      info: { title: "Nom propre, SCI ou LMNP ?", body: "Nom propre : simple, mais fiscalité IR potentiellement lourde. SCI à l'IS : idéal pour plusieurs biens ou associés, permet l'amortissement. LMNP : statut très avantageux pour la location meublée — amortissements déductibles, souvent 0 impôt pendant 10-15 ans.", contacts: ["Expert-comptable spécialisé immobilier locatif (indispensable)", "Notaire pour la création d'une SCI", "UNPI — unpi.fr — association de propriétaires"] } },
-    { id: "i4", phase: "Financement", label: "Consulter un courtier et optimiser le levier bancaire", month: "M1",
-      info: { title: "L'effet de levier en investissement", body: "Emprunter pour investir vous permet de vous constituer un patrimoine avec l'argent de la banque (et en partie des loyers). Un courtier spécialisé en investissement locatif connaît les banques les plus ouvertes à ce type de dossier.", contacts: ["CAFPI, Meilleurtaux, Vousfinancer", "Certaines banques (CIC, Crédit Mutuel, Banque Populaire) sont réputées favorables aux investisseurs"] } },
-    { id: "i5", phase: "Financement", label: "Calculer la fiscalité selon le régime choisi", month: "M1",
-      info: { title: "Optimiser la fiscalité locative", body: "Micro-foncier (revenus < 15k€/an) : abattement de 30%. Régime réel : déduction des charges réelles. LMNP au réel : + amortissement du bien = souvent 0 imposition pendant 10-15 ans. Un expert-comptable est souvent rentabilisé dès la 1re année.", contacts: ["Expert-comptable spécialisé LMNP/SCI (100-300€/an)", "Impôts.gouv.fr — simulateur fiscal", "ANIL — anil.org"] } },
-    { id: "i6", phase: "Recherche", label: "Cibler les zones à fort potentiel locatif", month: "M2",
-      info: { title: "Comment identifier les bonnes zones ?", body: "Cherchez des villes avec forte demande locative, faible taux de vacance et dynamisme économique. En IDF : privilégiez les zones proches du Grand Paris Express. Évitez les zones tendues où les loyers sont plafonnés si votre rendement en dépend.", contacts: ["Observatoire des loyers — observatoires-des-loyers.fr", "INSEE — données démographiques et emploi", "SeLoger Pro — données de marché locatif"] } },
-    { id: "i7", phase: "Recherche", label: "Analyser la demande locative locale", month: "M2",
-      info: { title: "Vérifier la demande avant d'acheter", body: "Publiez une fausse annonce de location sur LeBonCoin avant d'acheter : si vous recevez 20+ demandes en 48h, la demande est forte. Renseignez-vous aussi auprès d'agences locales sur les délais de relocation habituels.", contacts: ["LeBonCoin Immo, PAP.fr — tester la demande", "Agences locales de gestion locative pour un avis marché", "Clameur.fr — données de marché locatif"] } },
-    { id: "i8", phase: "Recherche", label: "Visiter et évaluer les biens (travaux, charges, DPE)", month: "M2",
-      info: { title: "Ce qu'il faut évaluer en visite investisseur", body: "Regardez aussi : le DPE (les biens G sont interdits à la location depuis 2025, F en 2028), l'état général, le montant des charges de copro, et la facilité de gestion. Un DPE dégradé peut être un argument de négociation du prix.", contacts: ["Expert bâtiment pour un audit technique (200-500€)", "Diagnostiqueur certifié pour le DPE", "Artisans locaux pour estimer les travaux avant l'offre"] } },
-    { id: "i9", phase: "Acquisition", label: "Faire une offre et signer le compromis", month: "M3",
-      info: { title: "Négocier en investisseur", body: "En tant qu'investisseur, vous avez plus de marge de négociation (pas d'urgence émotionnelle, dossier souvent solide). Appuyez-vous sur le rendement cible pour justifier votre prix : 'À ce prix, le rendement ne couvre pas le crédit — je propose X.'", contacts: ["Votre notaire pour la rédaction du compromis", "Votre courtier pour confirmer le financement avant l'offre", "DVF (data.gouv.fr) — prix de vente réels dans le secteur"] } },
-    { id: "i10", phase: "Acquisition", label: "Obtenir le financement et signer l'acte", month: "M4",
-      info: { title: "Finaliser le financement investisseur", body: "Certaines banques demandent que les loyers couvrent au moins 70% de la mensualité. Votre courtier saura orienter votre dossier vers les établissements les plus favorables aux investisseurs.", contacts: ["Votre courtier immobilier spécialisé investissement", "Votre notaire pour l'acte authentique", "Assurance emprunteur en délégation (économie substantielle)"] } },
-    { id: "i11", phase: "Mise en location", label: "Réaliser les travaux si nécessaire", month: "M5",
-      info: { title: "Travaux : optimiser et déduire", body: "Les travaux sont déductibles des revenus fonciers au régime réel, ou amortissables en LMNP. Gardez toutes les factures. Priorisez isolation (DPE), salle de bain et cuisine (critères locatifs), peinture. Obtenez 3 devis.", contacts: ["Artisans certifiés RGE pour les aides (MaPrimeRénov')", "MaPrimeRenov.gouv.fr", "Habitissimo, Mon Artisan pour comparer des devis"] } },
-    { id: "i12", phase: "Mise en location", label: "Rédiger et publier l'annonce de location", month: "M5",
-      info: { title: "Bien rédiger son annonce locative", body: "Mentionnez : surface Carrez, nombre de pièces, étage, DPE, loyer CC, transports. En zone tendue, le loyer est encadré — vérifiez le plafond applicable avant de publier.", contacts: ["PAP.fr (gratuit pour les propriétaires)", "LeBonCoin Immo", "Encadrement des loyers : encadrementdesloyers.gouv.fr"] } },
-    { id: "i13", phase: "Mise en location", label: "Sélectionner le locataire (dossier, garant)", month: "M5",
-      info: { title: "Comment sélectionner son locataire ?", body: "La loi interdit de discriminer. Vous pouvez demander bulletins de salaire, avis d'imposition, contrat de travail. Ratio habituel : revenus = 3x le loyer. Vérifiez les justificatifs via DossierFacile. Vous pouvez aussi souscrire une GLI (Garantie Loyers Impayés).", contacts: ["DossierFacile.fr — vérification sécurisée (service public)", "GLI : Visale (gratuit, Action Logement) ou assureurs privés", "UNPI — unpi.fr"] } },
-    { id: "i14", phase: "Mise en location", label: "Rédiger le bail et faire l'état des lieux d'entrée", month: "M5",
-      info: { title: "Bail et état des lieux : les essentiels", body: "Le bail doit être conforme à la loi Alur. L'état des lieux d'entrée est capital : photos datées de chaque pièce, relevé des compteurs. En cas de litige à la sortie, c'est votre seule protection.", contacts: ["Modèle de bail officiel : service-public.fr", "Apps état des lieux : Immo Facile, État des lieux Facile", "Agence de gestion locative si vous préférez déléguer (6-10% des loyers)"] } },
-  ],
+const IMPORTANCE = {
+  essentielle: { label: "Essentielle", color: "#b91c1c", bg: "#fee2e2" },
+  importante: { label: "Importante", color: "#b45309", bg: "#fef3c7" },
+  utile: { label: "Utile", color: "#047857", bg: "#d1fae5" },
 };
 
-// Merge steps for "les-deux"
-STEPS_BY_PROFILE["les-deux"] = [
-  ...STEPS_BY_PROFILE.vendeur.map(s => ({ ...s, tag: "Vente" })),
-  ...STEPS_BY_PROFILE.acheteur.map(s => ({ ...s, tag: "Achat" })),
+// ─── STEP DATA ────────────────────────────────────────────────────────────────
+function step(phase, label, month, importance, info) {
+  return { phase, label, month, importance, info };
+}
+
+function mk(typeId, list) {
+  return list.map((s, i) => ({ id: `${typeId}-${i + 1}`, ...s }));
+}
+
+const STEPS_BY_TYPE = {};
+
+STEPS_BY_TYPE["achat-rp"] = mk("achat-rp", [
+  step("Préparer", "Calculer son budget et sa capacité d'emprunt", "M1", "essentielle", {
+    title: "Comment calculer sa capacité d'emprunt ?",
+    body: "Vos mensualités de crédit ne doivent pas dépasser 35% de vos revenus nets. Intégrez les frais de notaire (environ 7,5% dans l'ancien, 2,5% dans le neuf) dans votre budget global.",
+    contacts: ["Votre conseiller bancaire", "Un courtier immobilier (gratuit pour vous)", "CAFPI, Meilleurtaux, Pretto"],
+  }),
+  step("Préparer", "Consulter un courtier immobilier", "M1", "importante", {
+    title: "Pourquoi passer par un courtier ?",
+    body: "Le courtier est rémunéré par la banque, pas par vous. Il compare des dizaines d'offres et négocie taux, frais de dossier et assurance emprunteur.",
+    contacts: ["CAFPI — cafpi.fr", "Meilleurtaux.com", "Pretto.fr (100% en ligne)"],
+  }),
+  step("Préparer", "Obtenir un accord de principe bancaire", "M1", "importante", {
+    title: "Un atout pour rassurer le vendeur",
+    body: "L'accord de principe confirme que votre dossier est finançable pour un montant donné. Il rassure fortement les vendeurs et les agences.",
+    contacts: ["Votre conseiller bancaire", "Votre courtier"],
+  }),
+  step("Recherche", "Définir ses critères (surface, zone, transports…)", "M1", "importante", {
+    title: "Bien cadrer sa recherche",
+    body: "Distinguez vos critères impératifs de vos critères souhaitables. Pensez au DPE : les biens F/G peuvent être difficiles à revendre.",
+    contacts: ["Bien'ici.com", "SeLoger, PAP.fr, LeBonCoin"],
+  }),
+  step("Recherche", "Lancer les recherches actives et créer des alertes", "M1-2", "utile", {
+    title: "Optimiser sa recherche",
+    body: "Créez des alertes email sur tous les portails. Contactez aussi des agences locales directement : certains biens ne sont jamais publiés en ligne (off-market).",
+    contacts: ["SeLoger.com — alertes email", "PAP.fr", "Agences locales à contacter directement"],
+  }),
+  step("Visites", "Organiser et effectuer les visites", "M2", "essentielle", {
+    title: "Ce qu'il faut vérifier en visite",
+    body: "Vérifiez l'état des fenêtres, de la plomberie, du tableau électrique. Regardez les plafonds (taches = infiltrations). Demandez le montant des charges.",
+    contacts: ["Prévoyez un mètre ruban et une lampe torche", "Expert bâtiment en cas de doute structurel (200-500€)"],
+  }),
+  step("Visites", "Vérifier PV d'AG, charges et état de la copropriété", "M2", "importante", {
+    title: "L'importance des documents de copro",
+    body: "Les 3 derniers PV d'AG révèlent les travaux votés et les litiges en cours. Des travaux votés peuvent représenter des dizaines de milliers d'euros.",
+    contacts: ["Documents à demander au vendeur avant le compromis (loi ALUR)"],
+  }),
+  step("Offre", "Faire une offre d'achat écrite", "M2-3", "essentielle", {
+    title: "Comment formuler une offre ?",
+    body: "L'offre doit mentionner le prix proposé, les modalités de financement et une date limite de réponse (48-72h).",
+    contacts: ["PAP.fr — modèle d'offre gratuit", "DVF (data.gouv.fr) — prix réels du secteur"],
+  }),
+  step("Offre", "Négocier le prix", "M3", "utile", {
+    title: "Les bons arguments pour négocier",
+    body: "Appuyez-vous sur le prix au m² du secteur, la durée de mise en vente et le DPE. Un bien qui stagne depuis 3 mois+ est souvent négociable.",
+    contacts: ["MeilleursAgents.com", "DVF — data.gouv.fr"],
+  }),
+  step("Compromis", "Signer le compromis de vente", "M3", "essentielle", {
+    title: "Le compromis côté acheteur",
+    body: "Vous disposez de 10 jours pour vous rétracter sans pénalité. Passé ce délai, en cas de renoncement hors clause suspensive, vous perdez le dépôt de garantie.",
+    contacts: ["Votre notaire rédige et explique chaque clause"],
+  }),
+  step("Compromis", "Suivre la condition suspensive de prêt", "M3-4", "importante", {
+    title: "La condition suspensive de prêt",
+    body: "Si votre prêt est refusé dans le délai prévu (45-60 jours), la vente est annulée et le dépôt de garantie restitué.",
+    contacts: ["Votre notaire suit l'avancement du dossier"],
+  }),
+  step("Prêt", "Déposer le dossier complet à la banque / courtier", "M3-4", "essentielle", {
+    title: "Constituer un dossier béton",
+    body: "Préparez bulletins de salaire, avis d'imposition, relevés bancaires, compromis signé et justificatifs d'épargne.",
+    contacts: ["Votre courtier centralise le dossier", "Délai d'obtention : 3 à 6 semaines"],
+  }),
+  step("Prêt", "Respecter le délai légal de 11 jours avant acceptation", "M4", "importante", {
+    title: "Le délai de réflexion obligatoire",
+    body: "La loi impose 11 jours après réception de l'offre de prêt avant de pouvoir l'accepter. L'offre reste valable 30 jours.",
+    contacts: ["Acceptez par courrier signé à partir du 12e jour"],
+  }),
+  step("Notaire", "Préparer l'acte définitif avec le notaire", "M4-5", "importante", {
+    title: "L'acte authentique",
+    body: "Le notaire vérifie les titres de propriété, purge les hypothèques et calcule les frais avant de vous convoquer pour la signature.",
+    contacts: ["Votre notaire (le vôtre ou celui du vendeur, sans frais doublés)"],
+  }),
+  step("Notaire", "Signer l'acte authentique d'achat", "M5", "essentielle", {
+    title: "Le jour de la signature",
+    body: "Vous versez le solde du prix et les frais de notaire. La banque vire les fonds directement au notaire. Vous repartez avec les clés !",
+    contacts: ["Apportez une pièce d'identité valide"],
+  }),
+  step("Installation", "Souscrire assurance habitation et emprunteur", "M5", "essentielle", {
+    title: "Assurance habitation et emprunteur",
+    body: "L'assurance habitation est indispensable, l'emprunteur exigée par la banque. Vous pouvez choisir librement votre assureur (délégation, souvent 30-50% moins cher).",
+    contacts: ["Comparateurs : LeLynx.fr, AssurLand.com", "Loi Lemoine : changement possible à tout moment"],
+  }),
+  step("Installation", "Résilier et transférer les contrats (énergie, internet)", "M5", "importante", {
+    title: "Résiliation et transfert des contrats",
+    body: "Résiliez ou transférez vos contrats à la date de signature avec un relevé de compteur. Prévoyez un préavis de 30 jours pour internet.",
+    contacts: ["EDF, Engie : espaces clients en ligne", "Assurance habitation ancien logement"],
+  }),
+  step("Installation", "Effectuer le changement d'adresse officiel", "M5", "utile", {
+    title: "Ne rien oublier",
+    body: "Utilisez Service-Public.fr pour notifier en une fois impôts, CAF, carte grise. N'oubliez pas banque, médecin, employeur.",
+    contacts: ["Service-Public.fr — gratuit", "La Poste — redirection de courrier (payant)"],
+  }),
+  step("Travaux (optionnel)", "Prioriser les travaux nécessaires", "M5-6", "utile", {
+    title: "Bien prioriser",
+    body: "Isolation, salle de bain et cuisine sont les postes qui apportent le plus de confort et de valeur. Obtenez plusieurs devis avant de commencer.",
+    contacts: ["Habitissimo, Mon Artisan pour comparer des devis"],
+  }),
+  step("Travaux (optionnel)", "Obtenir des devis avant l'emménagement", "M6", "utile", {
+    title: "Comparer plusieurs artisans",
+    body: "Demandez au moins 3 devis détaillés et vérifiez les assurances (décennale) et certifications (RGE) avant de signer.",
+    contacts: ["Artisans certifiés RGE pour les aides"],
+  }),
+]);
+
+STEPS_BY_TYPE["investissement-locatif"] = mk("investissement-locatif", [
+  step("Préparer", "Définir la stratégie locative (nue, meublée, coloc…)", "M1", "essentielle", {
+    title: "Quelle stratégie choisir ?",
+    body: "Location nue : bail 3 ans, fiscalité simple. Meublée (LMNP) : bail 1 an, fiscalité avantageuse via amortissements. Colocation : rendement plus élevé, gestion plus intensive.",
+    contacts: ["Conseiller fiscal spécialisé immobilier"],
+  }),
+  step("Préparer", "Calculer le rendement locatif brut et net cible", "M1", "essentielle", {
+    title: "Comment calculer le rendement ?",
+    body: "Rendement brut = (loyer annuel / prix d'achat) × 100. Visez au moins 4% net en zone tendue, davantage en régions moins chères.",
+    contacts: ["Simulateurs : rendement-locatif.com"],
+  }),
+  step("Préparer", "Consulter un courtier pour optimiser le levier bancaire", "M1", "importante", {
+    title: "L'effet de levier",
+    body: "Emprunter pour investir vous permet de vous constituer un patrimoine avec l'argent de la banque. Un courtier spécialisé connaît les banques favorables aux investisseurs.",
+    contacts: ["CAFPI, Meilleurtaux, Vousfinancer"],
+  }),
+  step("Recherche", "Cibler les zones à fort potentiel locatif", "M2", "importante", {
+    title: "Identifier les bonnes zones",
+    body: "Cherchez une forte demande locative, un faible taux de vacance et un dynamisme économique. Évitez les zones tendues si votre rendement en dépend.",
+    contacts: ["Observatoire des loyers", "INSEE — données démographiques"],
+  }),
+  step("Recherche", "Analyser la demande locative locale", "M2", "utile", {
+    title: "Vérifier la demande avant d'acheter",
+    body: "Publiez une fausse annonce de location avant d'acheter : 20+ demandes en 48h indique une forte demande.",
+    contacts: ["LeBonCoin Immo, PAP.fr"],
+  }),
+  step("Visites", "Visiter et évaluer les biens (travaux, charges, DPE)", "M2", "essentielle", {
+    title: "Ce qu'il faut évaluer",
+    body: "Le DPE conditionne la mise en location (G interdit depuis 2025, F en 2028). Un DPE dégradé peut être un argument de négociation.",
+    contacts: ["Expert bâtiment pour un audit (200-500€)"],
+  }),
+  step("Visites", "Vérifier PV d'AG, charges et travaux votés", "M2", "importante", {
+    title: "Anticiper les charges futures",
+    body: "Des travaux votés en copropriété peuvent représenter des dizaines de milliers d'euros à votre charge après l'achat.",
+    contacts: ["Documents à demander avant toute offre"],
+  }),
+  step("Offre", "Faire une offre et négocier en investisseur", "M3", "essentielle", {
+    title: "Négocier en investisseur",
+    body: "Vous avez plus de marge sans urgence émotionnelle. Appuyez-vous sur le rendement cible pour justifier votre prix.",
+    contacts: ["DVF (data.gouv.fr) — prix réels du secteur"],
+  }),
+  step("Compromis", "Signer le compromis de vente", "M3", "essentielle", {
+    title: "Le compromis",
+    body: "Le compromis fixe le prix et les conditions suspensives. Vérifiez le délai de la clause suspensive de prêt (45-60 jours).",
+    contacts: ["Votre notaire"],
+  }),
+  step("Prêt", "Déposer le dossier banque / courtier", "M3-4", "essentielle", {
+    title: "Un dossier investisseur solide",
+    body: "Certaines banques demandent que les loyers couvrent au moins 70% de la mensualité. Votre courtier oriente vers les banques les plus favorables.",
+    contacts: ["Votre courtier spécialisé investissement"],
+  }),
+  step("Prêt", "Obtenir l'offre de prêt officielle", "M4", "importante", {
+    title: "Vérifier l'offre",
+    body: "Vérifiez le TAEG, le coût total du crédit et les conditions de remboursement anticipé avant d'accepter.",
+    contacts: ["Votre courtier compare les offres"],
+  }),
+  step("Notaire", "Signer l'acte authentique d'achat", "M5", "essentielle", {
+    title: "Finaliser l'acquisition",
+    body: "La banque vire les fonds au notaire avant la signature. Prévoyez l'assurance emprunteur en délégation pour économiser.",
+    contacts: ["Votre notaire coordonne avec la banque"],
+  }),
+  step("Installation", "Choisir la structure fiscale (nom propre, SCI, LMNP)", "M5", "importante", {
+    title: "Nom propre, SCI ou LMNP ?",
+    body: "Nom propre : simple mais fiscalité IR potentiellement lourde. LMNP : amortissements déductibles, souvent 0 impôt 10-15 ans.",
+    contacts: ["Expert-comptable spécialisé locatif"],
+  }),
+  step("Installation", "Souscrire une assurance propriétaire non-occupant (PNO)", "M5", "importante", {
+    title: "Pourquoi une assurance PNO ?",
+    body: "Elle couvre les dommages même en l'absence de locataire et complète l'assurance du locataire. Souvent obligatoire en copropriété.",
+    contacts: ["Comparateurs : LeLynx.fr, AssurLand.com"],
+  }),
+  step("Installation", "Publier l'annonce et sélectionner un locataire", "M5-6", "essentielle", {
+    title: "Trouver le bon locataire",
+    body: "Ratio habituel : revenus = 3x le loyer. Vérifiez les justificatifs via DossierFacile. Une GLI protège contre les impayés.",
+    contacts: ["DossierFacile.fr", "GLI : Visale ou assureurs privés"],
+  }),
+  step("Travaux (optionnel)", "Réaliser les travaux avant mise en location", "M5", "utile", {
+    title: "Travaux déductibles",
+    body: "Les travaux sont déductibles des revenus fonciers au régime réel, ou amortissables en LMNP. Gardez toutes les factures.",
+    contacts: ["Artisans certifiés RGE pour les aides"],
+  }),
+]);
+
+STEPS_BY_TYPE["vente"] = mk("vente", [
+  step("Préparation", "Estimer le bien (2-3 agences + outils en ligne)", "M1", "essentielle", {
+    title: "Comment estimer son bien ?",
+    body: "Faites appel à 2-3 agences locales pour des estimations gratuites. Complétez avec des outils en ligne. Évitez de surestimer : un bien trop cher se déprécie aux yeux des acheteurs.",
+    contacts: ["MeilleursAgents.com", "PAP.fr — outil gratuit d'estimation"],
+  }),
+  step("Préparation", "Choisir le mode de vente (agence ou PAP)", "M1", "importante", {
+    title: "Agence ou particulier à particulier ?",
+    body: "En agence : commission de 3 à 8%, mais accompagnement complet. En PAP : aucune commission, mais vous gérez tout.",
+    contacts: ["SeLoger, LeBonCoin, PAP.fr", "IAD, Efficity (commission réduite ~3%)"],
+  }),
+  step("Préparation", "Réunir les diagnostics obligatoires (DPE, Carrez…)", "M1", "essentielle", {
+    title: "Diagnostics obligatoires",
+    body: "La loi impose une liste de diagnostics avant toute vente. Comptez 400 à 700€ pour un pack complet réalisé par un diagnostiqueur certifié.",
+    contacts: ["diagnostiqueurs.gouv.fr"],
+  }),
+  step("Mise en vente", "Publier l'annonce en ligne (SeLoger, LBC, PAP…)", "M2", "essentielle", {
+    title: "Bien diffuser son annonce",
+    body: "Multipliez les portails pour maximiser la visibilité. Soignez le titre, décrivez les points forts et mentionnez le DPE.",
+    contacts: ["SeLoger.com", "LeBonCoin Immo", "PAP.fr"],
+  }),
+  step("Mise en vente", "Organiser les visites", "M2", "importante", {
+    title: "Bien préparer les visites",
+    body: "Proposez des créneaux fixes, rangez et maximisez la lumière naturelle. Préparez un dossier avec diagnostics et charges.",
+    contacts: ["1h par visite en moyenne"],
+  }),
+  step("Mise en vente", "Analyser et négocier les offres", "M2-3", "essentielle", {
+    title: "Comment évaluer une offre ?",
+    body: "Ne regardez pas seulement le prix : vérifiez la solidité du financement de l'acheteur. Vous pouvez contre-proposer par écrit.",
+    contacts: ["Votre notaire peut vous conseiller"],
+  }),
+  step("Compromis", "Signer le compromis de vente", "M3", "essentielle", {
+    title: "Qu'est-ce que le compromis ?",
+    body: "Il engage vendeur et acheteur, fixe le prix et les conditions suspensives. Lisez-le attentivement avant de signer.",
+    contacts: ["Votre notaire ou l'agence le rédige"],
+  }),
+  step("Compromis", "Suivre le délai de rétractation (10 jours)", "M3", "importante", {
+    title: "Le délai de rétractation",
+    body: "L'acheteur dispose de 10 jours pour se rétracter sans justification. Ne retirez pas votre annonce pendant ce délai.",
+    contacts: ["Votre notaire vous informe de la date de fin"],
+  }),
+  step("Compromis", "Suivre la condition suspensive de prêt de l'acheteur", "M3-4", "importante", {
+    title: "La condition suspensive de prêt",
+    body: "Si le prêt de l'acheteur est refusé, la vente est annulée et son dépôt restitué. Ce délai est de 45 à 60 jours.",
+    contacts: ["Restez en contact avec votre notaire"],
+  }),
+  step("Finalisation", "Signer l'acte de vente définitif", "M4", "essentielle", {
+    title: "Le jour de la signature",
+    body: "Le prix vous est versé par virement le jour même ou le lendemain. Pensez à relever les compteurs la veille.",
+    contacts: ["Votre notaire coordonne tout"],
+  }),
+  step("Finalisation", "Résilier les contrats (énergie, internet, assurance)", "M4", "importante", {
+    title: "Résiliation des contrats",
+    body: "Résiliez ou transférez vos contrats à la date de signature avec un relevé de compteur.",
+    contacts: ["EDF, Engie, opérateurs internet"],
+  }),
+  step("Finalisation", "Effectuer le changement d'adresse officiel", "M4", "utile", {
+    title: "Ne rien oublier",
+    body: "Service-Public.fr permet de notifier en une fois impôts, CAF, carte grise.",
+    contacts: ["Service-Public.fr — gratuit"],
+  }),
+]);
+
+STEPS_BY_TYPE["vente-achat"] = [
+  ...STEPS_BY_TYPE["vente"].map(s => ({ ...s, tag: "Vente" })),
+  ...STEPS_BY_TYPE["achat-rp"].map(s => ({ ...s, tag: "Achat" })),
 ];
 
-// ─── CALCULATORS ──────────────────────────────────────────────────────────────
-function calcEmprunt(revenus, duree, taux) {
-  const mensMax = revenus * 0.35;
-  const r = taux / 100 / 12;
-  const n = duree * 12;
-  if (r === 0) return mensMax * n;
-  return mensMax * (1 - Math.pow(1 + r, -n)) / r;
-}
+STEPS_BY_TYPE["construction"] = mk("construction", [
+  step("Terrain", "Trouver et acheter le terrain", "M1", "essentielle", {
+    title: "Bien choisir son terrain",
+    body: "Vérifiez le bornage, la viabilisation (eau, électricité, assainissement) et l'exposition avant de signer une promesse de vente.",
+    contacts: ["Géomètre pour le bornage", "Notaire pour la promesse de vente"],
+  }),
+  step("Terrain", "Vérifier le PLU et la constructibilité", "M1", "essentielle", {
+    title: "Le Plan Local d'Urbanisme",
+    body: "Le PLU définit ce qu'il est possible de construire (hauteur, emprise au sol, distances). Consultez-le en mairie avant tout achat.",
+    contacts: ["Service urbanisme de la mairie", "Certificat d'urbanisme (gratuit)"],
+  }),
+  step("Architecte", "Choisir un architecte ou un constructeur (CCMI)", "M2", "essentielle", {
+    title: "Architecte ou constructeur ?",
+    body: "Le CCMI (contrat de construction de maison individuelle) offre des garanties légales fortes : prix et délai fermes, garantie de livraison.",
+    contacts: ["Ordre des architectes — architectes.org"],
+  }),
+  step("Architecte", "Valider les plans et le budget", "M2", "importante", {
+    title: "Verrouiller le budget",
+    body: "Prévoyez une marge de 10% pour les imprévus. Vérifiez que le contrat inclut tous les postes (VRD, finitions).",
+    contacts: ["Votre architecte ou constructeur"],
+  }),
+  step("Permis", "Déposer le permis de construire", "M2-3", "essentielle", {
+    title: "Le dossier de permis",
+    body: "Le dossier comprend plans, façades et notice descriptive. L'instruction dure 2 à 3 mois en général.",
+    contacts: ["Service urbanisme de la mairie"],
+  }),
+  step("Permis", "Attendre le délai d'instruction et de recours", "M3-4", "importante", {
+    title: "Purger les recours",
+    body: "Après l'obtention du permis, un délai de 2 mois de recours des tiers s'applique avant de pouvoir démarrer sereinement.",
+    contacts: ["Affichage obligatoire du permis sur le terrain"],
+  }),
+  step("Financement", "Obtenir le prêt construction à déblocage progressif", "M3-4", "essentielle", {
+    title: "Le prêt construction",
+    body: "Les fonds sont débloqués au fur et à mesure de l'avancement du chantier, sur présentation d'appels de fonds.",
+    contacts: ["Votre banque ou courtier"],
+  }),
+  step("Financement", "Souscrire la garantie dommages-ouvrage", "M4", "essentielle", {
+    title: "Une assurance obligatoire",
+    body: "Elle permet d'être indemnisé rapidement en cas de malfaçon, sans attendre une décision de justice contre le constructeur.",
+    contacts: ["Votre assureur habituel ou un courtier spécialisé"],
+  }),
+  step("Chantier", "Suivre les appels de fonds par étape", "M4-8", "importante", {
+    title: "Le calendrier de paiement CCMI",
+    body: "La loi encadre les pourcentages maximum à verser à chaque étape (fondations, hors d'eau, hors d'air…).",
+    contacts: ["Votre constructeur vous transmet les appels de fonds"],
+  }),
+  step("Chantier", "Suivre les visites de chantier", "M4-8", "utile", {
+    title: "Rester présent",
+    body: "Visitez régulièrement le chantier et documentez l'avancement par photos. Signalez rapidement toute anomalie.",
+    contacts: ["Un expert en bâtiment peut vous accompagner"],
+  }),
+  step("Réception", "Réceptionner les travaux et émettre des réserves", "M9", "essentielle", {
+    title: "La réception des travaux",
+    body: "Ce jour marque le point de départ des garanties légales (parfait achèvement, biennale, décennale). Notez toutes les réserves sur le PV.",
+    contacts: ["Un expert peut vous assister à la réception"],
+  }),
+  step("Réception", "Souscrire les assurances habitation", "M9", "essentielle", {
+    title: "Assurer votre nouvelle maison",
+    body: "Souscrivez l'assurance habitation avant l'emménagement, elle est indispensable dès la réception.",
+    contacts: ["Comparateurs : LeLynx.fr, AssurLand.com"],
+  }),
+]);
 
-function calcNotaire(prix, neuf = false) {
-  return neuf ? prix * 0.025 : prix * 0.075;
-}
+STEPS_BY_TYPE["travaux"] = mk("travaux", [
+  step("Définir projet", "Définir le périmètre des travaux", "M1", "essentielle", {
+    title: "Cadrer le projet",
+    body: "Listez précisément les pièces et postes concernés (cuisine, SDB, isolation, électricité) pour obtenir des devis comparables.",
+    contacts: ["Faites un plan ou croquis avant de consulter des artisans"],
+  }),
+  step("Définir projet", "Prioriser les postes de travaux", "M1", "importante", {
+    title: "Bien prioriser",
+    body: "Isolation, salle de bain et cuisine apportent le plus de confort et de valeur. Traitez d'abord le structurel avant l'esthétique.",
+    contacts: ["Habitissimo, Mon Artisan"],
+  }),
+  step("Devis", "Obtenir plusieurs devis d'artisans", "M1-2", "essentielle", {
+    title: "Comparer les devis",
+    body: "Demandez au moins 3 devis détaillés poste par poste. Méfiez-vous des écarts de prix trop importants sans explication.",
+    contacts: ["Habitissimo, Mon Artisan pour comparer"],
+  }),
+  step("Devis", "Vérifier les assurances (décennale, RGE)", "M2", "importante", {
+    title: "Sécuriser le chantier",
+    body: "Vérifiez l'assurance décennale de chaque artisan et sa certification RGE si vous visez des aides énergétiques.",
+    contacts: ["qualibat.com pour vérifier une certification"],
+  }),
+  step("Financement", "Financer les travaux (prêt travaux, apport)", "M2", "essentielle", {
+    title: "Choisir le bon financement",
+    body: "Un prêt travaux classique convient pour de petits montants ; au-delà, un rachat de crédit ou un prêt immobilier peut être plus avantageux.",
+    contacts: ["Votre banque ou un courtier"],
+  }),
+  step("Financement", "Vérifier les aides mobilisables", "M2", "utile", {
+    title: "Aides et subventions",
+    body: "Certains travaux (isolation, chauffage) ouvrent droit à des aides même hors rénovation énergétique globale.",
+    contacts: ["MaPrimeRenov.gouv.fr", "Aides locales (mairie, région)"],
+  }),
+  step("Chantier", "Suivre l'avancement du chantier", "M2-4", "importante", {
+    title: "Rester impliqué",
+    body: "Prévoyez des points réguliers avec l'artisan. Documentez l'avancement par photos avant/pendant/après.",
+    contacts: ["Un maître d'œuvre peut coordonner un chantier complexe"],
+  }),
+  step("Chantier", "Gérer les imprévus", "M2-4", "utile", {
+    title: "Prévoir une marge",
+    body: "Gardez 10 à 15% du budget en réserve pour les imprévus (découvertes en démolition, délais).",
+    contacts: ["Discutez des avenants par écrit avec l'artisan"],
+  }),
+  step("Réception", "Réceptionner les travaux", "M4", "essentielle", {
+    title: "Vérifier avant de payer le solde",
+    body: "Contrôlez la conformité aux devis avant de régler le solde. Notez toute réserve par écrit.",
+    contacts: ["Un expert peut vous accompagner pour un gros chantier"],
+  }),
+  step("Réception", "Conserver les factures et garanties", "M4", "utile", {
+    title: "Garder une trace",
+    body: "Les factures servent de preuve pour la garantie décennale et peuvent être utiles à la revente ou pour les impôts.",
+    contacts: ["Classez les factures par poste de travaux"],
+  }),
+]);
 
-function calcMensualite(capital, duree, taux) {
-  const r = taux / 100 / 12;
-  const n = duree * 12;
-  if (r === 0) return capital / n;
-  return capital * r / (1 - Math.pow(1 + r, -n));
-}
+STEPS_BY_TYPE["renovation-energetique"] = mk("renovation-energetique", [
+  step("Définir projet", "Faire réaliser un audit énergétique", "M1", "essentielle", {
+    title: "Point de départ indispensable",
+    body: "L'audit identifie les postes de déperdition (toiture, murs, fenêtres, chauffage) et hiérarchise les travaux les plus rentables.",
+    contacts: ["Bureau d'études thermiques certifié"],
+  }),
+  step("Définir projet", "Définir le bouquet de travaux (isolation, chauffage…)", "M1", "essentielle", {
+    title: "Viser un gain de classe DPE",
+    body: "Un bouquet cohérent (isolation + ventilation + chauffage) est souvent nécessaire pour gagner plusieurs classes DPE et maximiser les aides.",
+    contacts: ["MaPrimeRenov.gouv.fr — simulateur"],
+  }),
+  step("Devis", "Obtenir des devis d'artisans certifiés RGE", "M1-2", "essentielle", {
+    title: "La certification RGE est obligatoire",
+    body: "Sans certification RGE de l'artisan, vous perdez l'accès à la quasi-totalité des aides publiques (MaPrimeRénov', CEE, éco-PTZ).",
+    contacts: ["France Rénov' — france-renov.gouv.fr"],
+  }),
+  step("Devis", "Comparer les gains énergétiques attendus", "M2", "importante", {
+    title: "Comparer sur la performance, pas que le prix",
+    body: "Demandez à chaque artisan une estimation du gain de consommation attendu pour comparer objectivement les devis.",
+    contacts: ["Votre bureau d'études ou conseiller France Rénov'"],
+  }),
+  step("Financement", "Monter le dossier MaPrimeRénov'", "M2", "essentielle", {
+    title: "La principale aide de l'État",
+    body: "Le montant dépend de vos revenus et du gain énergétique. Le dossier se monte avant le démarrage des travaux, jamais après.",
+    contacts: ["maprimerenov.gouv.fr"],
+  }),
+  step("Financement", "Vérifier l'éco-PTZ et les aides locales / CEE", "M2", "utile", {
+    title: "Cumuler les aides",
+    body: "L'éco-prêt à taux zéro et les primes CEE (fournisseurs d'énergie) peuvent se cumuler avec MaPrimeRénov' pour réduire le reste à charge.",
+    contacts: ["service-public.fr — éco-PTZ", "Primes CEE auprès de votre fournisseur d'énergie"],
+  }),
+  step("Chantier", "Suivre les travaux avec l'artisan RGE", "M3-5", "importante", {
+    title: "Rester vigilant sur la mise en œuvre",
+    body: "Une isolation mal posée annule une grande partie du gain attendu. Exigez le respect des règles de l'art (ventilation notamment).",
+    contacts: ["Conseiller France Rénov' en cas de doute"],
+  }),
+  step("Chantier", "Vérifier la conformité aux critères d'aide", "M3-5", "importante", {
+    title: "Ne pas perdre l'aide en cours de route",
+    body: "Toute modification du devis initial doit être validée pour ne pas remettre en cause l'éligibilité aux aides déjà accordées.",
+    contacts: ["Votre conseiller France Rénov'"],
+  }),
+  step("Réception", "Faire réaliser le nouveau DPE", "M5-6", "essentielle", {
+    title: "Mesurer le résultat",
+    body: "Un nouveau DPE officialise le gain de classe énergétique, utile pour la revente, la location et le solde des aides.",
+    contacts: ["Diagnostiqueur certifié"],
+  }),
+  step("Réception", "Déclarer les travaux pour les aides et les impôts", "M6", "utile", {
+    title: "Finaliser les démarches",
+    body: "Conservez toutes les factures et attestations RGE. Certaines aides nécessitent une déclaration a posteriori pour le versement du solde.",
+    contacts: ["maprimerenov.gouv.fr — espace personnel"],
+  }),
+]);
 
-function calcRendement(prixAchat, loyerMensuel, charges) {
-  const loyer = loyerMensuel * 12;
-  const brut = (loyer / prixAchat) * 100;
-  const net = ((loyer - charges * 12) / prixAchat) * 100;
-  return { brut, net };
+STEPS_BY_TYPE["sci"] = mk("sci", [
+  step("Stratégie", "Définir l'objectif de la SCI (gestion, transmission…)", "M1", "essentielle", {
+    title: "Pourquoi créer une SCI ?",
+    body: "La SCI facilite la gestion à plusieurs, la transmission (donation de parts) et peut offrir une meilleure protection patrimoniale qu'une indivision.",
+    contacts: ["Notaire pour évaluer votre situation"],
+  }),
+  step("Stratégie", "Choisir le régime fiscal (IR ou IS)", "M1", "essentielle", {
+    title: "IR ou IS, un choix structurant",
+    body: "À l'IR, les revenus sont imposés directement chez les associés. À l'IS, la SCI permet l'amortissement du bien mais la plus-value à la revente est moins favorable.",
+    contacts: ["Expert-comptable spécialisé immobilier"],
+  }),
+  step("Constitution", "Rédiger les statuts", "M1-2", "essentielle", {
+    title: "Un document fondateur",
+    body: "Les statuts fixent l'objet social, le capital, la répartition des parts et les règles de gouvernance (majorité, gérance).",
+    contacts: ["Notaire ou avocat pour la rédaction"],
+  }),
+  step("Constitution", "Immatriculer la SCI (Kbis)", "M2", "essentielle", {
+    title: "L'immatriculation officielle",
+    body: "Publiez une annonce légale puis déposez le dossier au greffe pour obtenir le Kbis, indispensable pour agir au nom de la société.",
+    contacts: ["guichet-entreprises.fr"],
+  }),
+  step("Acquisition", "Ouvrir un compte bancaire dédié", "M2", "importante", {
+    title: "Séparer les patrimoines",
+    body: "Le compte bancaire de la SCI doit être distinct des comptes personnels des associés pour la clarté comptable et juridique.",
+    contacts: ["Votre banque habituelle ou une banque en ligne pro"],
+  }),
+  step("Acquisition", "Acquérir le ou les biens au nom de la SCI", "M2-3", "essentielle", {
+    title: "L'acte d'achat au nom de la société",
+    body: "Le compromis et l'acte de vente sont signés par le gérant au nom de la SCI, avec pouvoir donné par les statuts ou une décision d'assemblée.",
+    contacts: ["Votre notaire"],
+  }),
+  step("Gestion", "Tenir la comptabilité annuelle", "M4+", "importante", {
+    title: "Une obligation légale",
+    body: "Même une SCI à l'IR simplifiée doit tenir une comptabilité a minima. À l'IS, la comptabilité est complète et obligatoire.",
+    contacts: ["Expert-comptable spécialisé SCI"],
+  }),
+  step("Gestion", "Organiser l'assemblée générale annuelle", "M4+", "utile", {
+    title: "Formaliser les décisions",
+    body: "L'AG annuelle approuve les comptes et peut décider de travaux ou de distributions. Rédigez un procès-verbal à chaque fois.",
+    contacts: ["Modèles de PV disponibles auprès de votre expert-comptable"],
+  }),
+]);
+
+STEPS_BY_TYPE["lmnp"] = mk("lmnp", [
+  step("Stratégie", "Choisir le régime LMNP (micro-BIC ou réel)", "M1", "essentielle", {
+    title: "Micro-BIC ou réel ?",
+    body: "Le micro-BIC offre un abattement forfaitaire de 50%. Le régime réel permet de déduire les charges réelles et d'amortir le bien — souvent plus avantageux.",
+    contacts: ["Expert-comptable spécialisé LMNP"],
+  }),
+  step("Stratégie", "Estimer l'avantage fiscal (amortissements)", "M1", "importante", {
+    title: "L'atout du régime réel",
+    body: "L'amortissement du bien et du mobilier permet souvent de ne payer aucun impôt sur les loyers pendant 10 à 15 ans.",
+    contacts: ["Simulateurs LMNP en ligne"],
+  }),
+  step("Constitution", "S'immatriculer au greffe (activité meublée)", "M1-2", "essentielle", {
+    title: "Une déclaration obligatoire",
+    body: "Toute activité de location meublée doit être déclarée au greffe du tribunal de commerce dans les 15 jours suivant le début d'activité.",
+    contacts: ["guichet-entreprises.fr"],
+  }),
+  step("Constitution", "Choisir un expert-comptable spécialisé", "M2", "importante", {
+    title: "Un investissement rentable",
+    body: "Un expert-comptable LMNP (100-300€/an) sécurise vos amortissements et votre liasse fiscale, souvent rentabilisé dès la première année.",
+    contacts: ["Cabinets spécialisés LMNP en ligne"],
+  }),
+  step("Acquisition", "Acheter et meubler le bien selon le décret", "M2-4", "essentielle", {
+    title: "Le mobilier obligatoire",
+    body: "Un décret liste le mobilier minimum requis (literie, plaques de cuisson, réfrigérateur, vaisselle…) pour qualifier la location de meublée.",
+    contacts: ["Liste officielle sur service-public.fr"],
+  }),
+  step("Acquisition", "Vérifier la conformité du mobilier", "M4", "utile", {
+    title: "Éviter la requalification",
+    body: "Un logement insuffisamment meublé peut être requalifié en location nue par l'administration, avec un régime fiscal moins favorable.",
+    contacts: ["Votre expert-comptable peut vérifier la conformité"],
+  }),
+  step("Gestion", "Déclarer les revenus BIC chaque année", "M12", "essentielle", {
+    title: "La déclaration annuelle",
+    body: "Les revenus locatifs meublés se déclarent en BIC (bénéfices industriels et commerciaux), et non en revenus fonciers classiques.",
+    contacts: ["Votre expert-comptable prépare la liasse"],
+  }),
+  step("Gestion", "Suivre les amortissements comptables", "M12+", "importante", {
+    title: "Un suivi dans la durée",
+    body: "Les amortissements se répartissent sur plusieurs années (bien, mobilier, travaux). Un bon suivi maximise l'optimisation fiscale année après année.",
+    contacts: ["Votre expert-comptable LMNP"],
+  }),
+]);
+
+STEPS_BY_TYPE["mise-en-location"] = mk("mise-en-location", [
+  step("Préparation", "Réaliser les diagnostics obligatoires (DPE, électricité…)", "M1", "essentielle", {
+    title: "Diagnostics avant mise en location",
+    body: "DPE, électricité, gaz et ERP sont obligatoires avant toute mise en location. Le DPE conditionne même la légalité de la location (G interdit depuis 2025).",
+    contacts: ["diagnostiqueurs.gouv.fr"],
+  }),
+  step("Préparation", "Vérifier l'encadrement des loyers", "M1", "importante", {
+    title: "Zones tendues : un plafond légal",
+    body: "Dans certaines villes, le loyer est encadré par un plafond au m². Vérifiez avant de fixer votre prix pour éviter tout litige.",
+    contacts: ["encadrementdesloyers.gouv.fr"],
+  }),
+  step("Préparation", "Fixer le loyer et les charges", "M1", "essentielle", {
+    title: "Bien positionner son loyer",
+    body: "Comparez les annonces similaires du quartier. Un loyer trop élevé rallonge la vacance locative, qui coûte plus cher qu'une petite baisse de prix.",
+    contacts: ["SeLoger, LeBonCoin pour comparer le marché local"],
+  }),
+  step("Recherche locataire", "Publier l'annonce de location", "M1-2", "essentielle", {
+    title: "Bien rédiger son annonce",
+    body: "Mentionnez surface Carrez, nombre de pièces, étage, DPE et loyer charges comprises pour attirer les bons profils.",
+    contacts: ["PAP.fr (gratuit pour les propriétaires)", "LeBonCoin Immo"],
+  }),
+  step("Recherche locataire", "Sélectionner le locataire (dossier, garant)", "M2", "essentielle", {
+    title: "Comment sélectionner son locataire ?",
+    body: "La loi interdit de discriminer. Ratio habituel : revenus = 3x le loyer. Vérifiez les justificatifs via DossierFacile.",
+    contacts: ["DossierFacile.fr — vérification sécurisée", "GLI : Visale (gratuit) ou assureurs privés"],
+  }),
+  step("Bail", "Rédiger le bail conforme (loi Alur)", "M2", "essentielle", {
+    title: "Un bail type obligatoire",
+    body: "Le bail doit respecter le modèle type fixé par la loi Alur et mentionner toutes les clauses obligatoires (loyer, charges, durée, préavis).",
+    contacts: ["Modèle officiel sur service-public.fr"],
+  }),
+  step("Bail", "Faire l'état des lieux d'entrée", "M2", "essentielle", {
+    title: "Votre seule protection en cas de litige",
+    body: "Photos datées de chaque pièce et relevé des compteurs sont indispensables pour comparer avec l'état des lieux de sortie.",
+    contacts: ["Apps dédiées : État des lieux Facile, Immo Facile"],
+  }),
+  step("Gestion", "Encaisser les loyers et régulariser les charges", "M3+", "importante", {
+    title: "Le suivi mensuel",
+    body: "Prévoyez une régularisation annuelle des charges sur justificatifs. Un logiciel ou une agence de gestion peut automatiser le suivi.",
+    contacts: ["Agence de gestion locative (6-10% des loyers) si vous préférez déléguer"],
+  }),
+  step("Gestion", "Gérer le renouvellement ou le départ du locataire", "M12+", "utile", {
+    title: "Anticiper la fin de bail",
+    body: "Un préavis de 3 mois s'applique en location vide, 1 mois en meublé. Préparez l'état des lieux de sortie et la restitution du dépôt de garantie.",
+    contacts: ["service-public.fr — préavis et restitution du dépôt"],
+  }),
+]);
+
+// "Location" suit le même parcours que "Mise en location" (mêmes phases, côté bailleur)
+STEPS_BY_TYPE["location"] = STEPS_BY_TYPE["mise-en-location"];
+
+// ─── PHASE COLORS ─────────────────────────────────────────────────────────────
+const phaseColors = {
+  "Préparer": "#f59e0b",
+  "Recherche locataire": "#0ea5e9",
+  "Recherche": "#06b6d4",
+  "Visites": "#3b82f6",
+  "Offre": "#f97316",
+  "Compromis": "#8b5cf6",
+  "Prêt": "#ec4899",
+  "Notaire": "#6366f1",
+  "Installation": "#10b981",
+  "Travaux (optionnel)": "#64748b",
+  "Préparation": "#f59e0b",
+  "Mise en vente": "#3b82f6",
+  "Finalisation": "#10b981",
+  "Terrain": "#a16207",
+  "Architecte": "#7c3aed",
+  "Permis": "#0891b2",
+  "Financement": "#ec4899",
+  "Chantier": "#f97316",
+  "Réception": "#10b981",
+  "Définir projet": "#f59e0b",
+  "Devis": "#06b6d4",
+  "Stratégie": "#84cc16",
+  "Constitution": "#8b5cf6",
+  "Acquisition": "#6366f1",
+  "Gestion": "#14b8a6",
+  "Bail": "#f97316",
+};
+
+function getPhaseColor(phaseKey) {
+  if (phaseColors[phaseKey]) return phaseColors[phaseKey];
+  for (const [k, v] of Object.entries(phaseColors)) {
+    if (phaseKey.includes(k)) return v;
+  }
+  return "#94a3b8";
 }
 
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
@@ -233,228 +729,152 @@ function Card({ children, className = "" }) {
   );
 }
 
-function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder }) {
+function Input({ label, value, onChange, type = "text", placeholder }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
-      <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white">
-        {prefix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-r border-slate-200 py-2.5">{prefix}</span>}
-        <input
-          type={type}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="flex-1 px-3 py-2.5 text-sm outline-none bg-transparent"
-        />
-        {suffix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-l border-slate-200 py-2.5">{suffix}</span>}
-      </div>
-    </div>
-  );
-}
-
-function Select({ label, value, onChange, options }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
-      <select
+      <input
+        type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
         className="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-      >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      />
     </div>
   );
 }
-
-function Stat({ label, value, sub, accent }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-slate-500">{label}</span>
-      <span className={`text-xl font-bold ${accent || "text-slate-800"}`}>{value}</span>
-      {sub && <span className="text-xs text-slate-400">{sub}</span>}
-    </div>
-  );
-}
-
-const fmt = n => isNaN(n) || !isFinite(n) ? "—" : Math.round(n).toLocaleString("fr-FR") + " €";
-const fmtPct = n => isNaN(n) || !isFinite(n) ? "—" : n.toFixed(2) + " %";
 
 // ─── SCREENS ──────────────────────────────────────────────────────────────────
-
-function WelcomeScreen({ onSelect }) {
+function NewProjectTypeScreen({ onSelect, onBack }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
       style={{ background: "#1a1a2e" }}>
       <div className="max-w-lg w-full">
-        <div className="text-center mb-10">
+        {onBack && (
+          <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-6 transition-all">
+            ← Mes projets
+          </button>
+        )}
+        <div className="text-center mb-8">
           <div className="mx-auto mb-4 flex items-center justify-center" style={{ width: 64, height: 64, background: "#2563eb", borderRadius: "12px" }}>
             <span style={{ fontSize: 32 }}>🏠</span>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Mon Projet Immo
-          </h1>
-          <p className="text-slate-400 text-sm">Suivez chaque étape de votre projet immobilier, de A à Z</p>
+          <h1 className="text-2xl font-bold text-white mb-2">Nouveau projet</h1>
+          <p className="text-slate-400 text-sm">Quel type de projet voulez-vous suivre ?</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          {PROFILES.map(p => (
+          {PROJECT_TYPES.map(t => (
             <button
-              key={p.id}
-              onClick={() => onSelect(p.id)}
-              className="group bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 p-5 text-left transition-all duration-200 hover:scale-105"
+              key={t.id}
+              onClick={() => onSelect(t.id)}
+              className="group bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 p-4 text-left transition-all duration-200 hover:scale-105"
               style={{ borderRadius: "14px" }}
             >
-              <div className="text-3xl mb-2">{p.icon}</div>
-              <div className="text-white font-semibold text-sm">{p.label}</div>
-              <div className="text-slate-400 text-xs mt-0.5">{p.desc}</div>
+              <div className="text-2xl mb-1.5">{t.icon}</div>
+              <div className="text-white font-semibold text-sm leading-snug">{t.label}</div>
+              <div className="text-slate-400 text-xs mt-0.5">{t.desc}</div>
             </button>
           ))}
         </div>
-        <p className="text-center text-slate-500 text-xs mt-6">Vos données sont sauvegardées automatiquement</p>
       </div>
     </div>
   );
 }
 
-function OnboardingScreen({ profile, onDone }) {
-  const [step, setStep] = useState(0);
-  const [form, setForm] = useState({
-    prenom: "", revenus: "", apport: "", prixBien: "", prixVente: "",
-    capitalRestant: "", loyerCible: "", chargesCopro: "",
-    duree: "25", taux: "3.5", neuf: "non",
-    dateDebut: new Date().toISOString().slice(0, 7),
-  });
-
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  const isVendeur = profile === "vendeur" || profile === "les-deux";
-  const isAcheteur = profile === "acheteur" || profile === "les-deux";
-  const isInvestisseur = profile === "investisseur";
-
-  const steps = [
-    {
-      title: "Bienvenue ! Comment vous appelez-vous ?",
-      fields: (
-        <Input label="Votre prénom" value={form.prenom} onChange={v => set("prenom", v)} placeholder="Ex : Thomas" />
-      ),
-    },
-    isVendeur && {
-      title: "Votre bien actuel",
-      fields: (
-        <div className="flex flex-col gap-4">
-          <Input label="Prix de vente estimé" value={form.prixVente} onChange={v => set("prixVente", v)} type="number" suffix="€" placeholder="190000" />
-          <Input label="Capital restant dû (crédit en cours)" value={form.capitalRestant} onChange={v => set("capitalRestant", v)} type="number" suffix="€" placeholder="140000" />
-        </div>
-      ),
-    },
-    (isAcheteur || isInvestisseur) && {
-      title: "Votre situation financière",
-      fields: (
-        <div className="flex flex-col gap-4">
-          <Input label="Revenus nets mensuels du foyer" value={form.revenus} onChange={v => set("revenus", v)} type="number" suffix="€/mois" placeholder="5100" />
-          <Input label="Apport disponible" value={form.apport} onChange={v => set("apport", v)} type="number" suffix="€" placeholder="90000" />
-        </div>
-      ),
-    },
-    (isAcheteur || isInvestisseur) && {
-      title: "Votre projet d'achat",
-      fields: (
-        <div className="flex flex-col gap-4">
-          <Input label="Budget bien cible" value={form.prixBien} onChange={v => set("prixBien", v)} type="number" suffix="€" placeholder="300000" />
-          <Select label="Durée du prêt" value={form.duree} onChange={v => set("duree", v)}
-            options={[{ value: "15", label: "15 ans" }, { value: "20", label: "20 ans" }, { value: "25", label: "25 ans" }, { value: "30", label: "30 ans" }]} />
-          <Input label="Taux d'intérêt estimé" value={form.taux} onChange={v => set("taux", v)} type="number" suffix="%" placeholder="3.5" />
-          <Select label="Bien neuf ou ancien ?" value={form.neuf} onChange={v => set("neuf", v)}
-            options={[{ value: "non", label: "Ancien (frais notaire 7,5%)" }, { value: "oui", label: "Neuf (frais notaire 2,5%)" }]} />
-        </div>
-      ),
-    },
-    isInvestisseur && {
-      title: "Objectif locatif",
-      fields: (
-        <div className="flex flex-col gap-4">
-          <Input label="Loyer mensuel cible" value={form.loyerCible} onChange={v => set("loyerCible", v)} type="number" suffix="€/mois" placeholder="900" />
-          <Input label="Charges copro mensuelles estimées" value={form.chargesCopro} onChange={v => set("chargesCopro", v)} type="number" suffix="€/mois" placeholder="150" />
-        </div>
-      ),
-    },
-    {
-      title: "Date de début du projet",
-      fields: (
-        <Input label="Mois de démarrage" value={form.dateDebut} onChange={v => set("dateDebut", v)} type="month" />
-      ),
-    },
-  ].filter(Boolean);
-
-  const cur = steps[step];
+function NewProjectDetailsScreen({ type, onCreate, onBack }) {
+  const typeInfo = PROJECT_TYPES.find(t => t.id === type);
+  const [name, setName] = useState("");
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 7));
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6"
       style={{ background: "#1a1a2e" }}>
       <div className="max-w-md w-full">
+        <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-6 transition-all">
+          ← Changer de type
+        </button>
         <div className="mb-6">
-          <div className="flex gap-1.5 mb-6">
-            {steps.map((_, i) => (
-              <div key={i} className="h-1 flex-1 rounded-full transition-all duration-300"
-                style={{ background: i <= step ? "#3b82f6" : "rgba(255,255,255,0.15)" }} />
-            ))}
-          </div>
-          <p className="text-slate-400 text-xs mb-1">Étape {step + 1} / {steps.length}</p>
-          <h2 className="text-xl font-bold text-white">{cur.title}</h2>
+          <p className="text-slate-400 text-xs mb-1">{typeInfo?.icon} {typeInfo?.label}</p>
+          <h2 className="text-xl font-bold text-white">Donnez un nom à votre projet</h2>
         </div>
         <Card>
-          {cur.fields}
+          <div className="flex flex-col gap-4">
+            <Input label="Nom du projet" value={name} onChange={setName} placeholder={`Ex : ${typeInfo?.label}`} />
+            <Input label="Date de début" value={startDate} onChange={setStartDate} type="month" />
+          </div>
         </Card>
-        <div className="flex gap-3 mt-4">
-          {step > 0 && (
-            <button onClick={() => setStep(s => s - 1)}
-              className="flex-1 py-3 rounded-xl border border-white/20 text-white text-sm font-medium hover:bg-white/10 transition-all">
-              ← Retour
-            </button>
-          )}
-          <button
-            onClick={() => step < steps.length - 1 ? setStep(s => s + 1) : onDone(form)}
-            className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all"
-          >
-            {step < steps.length - 1 ? "Continuer →" : "Démarrer mon projet 🚀"}
-          </button>
+        <button
+          onClick={() => onCreate({ name: name.trim() || typeInfo?.label, startDate })}
+          className="w-full mt-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all"
+        >
+          Créer le projet 🚀
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectCard({ project, onOpen }) {
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const done = steps.filter(s => project.checklist[s.id]).length;
+  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
+  return (
+    <button onClick={() => onOpen(project.id)} className="text-left w-full">
+      <Card className="hover:shadow-md transition-all">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px", fontSize: 20 }}>
+              {typeInfo?.icon}
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-slate-800 text-sm truncate">{project.name}</div>
+              <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+            </div>
+          </div>
+          <span className="text-xs font-semibold text-blue-600 flex-shrink-0">{pct}%</span>
+        </div>
+        <ProgressBar value={done} max={steps.length} />
+      </Card>
+    </button>
+  );
+}
+
+function ProjectsScreen({ projects, onOpen, onCreate }) {
+  return (
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
+      <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px" }}>
+              <span style={{ fontSize: 20 }}>🏠</span>
+            </div>
+            <h1 className="text-2xl font-bold">Mes projets</h1>
+          </div>
+          <p className="text-slate-400 text-sm">{projects.length} projet{projects.length > 1 ? "s" : ""} en cours</p>
+        </div>
+      </div>
+      <div className="max-w-2xl mx-auto px-5 -mt-6 pb-10">
+        <button onClick={onCreate}
+          className="w-full mb-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg">
+          + Nouveau projet
+        </button>
+        <div className="flex flex-col gap-3">
+          {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
         </div>
       </div>
     </div>
   );
 }
 
-function Dashboard({ profile, form, checklist, onToggle, onReset }) {
-  const [tab, setTab] = useState("checklist");
+function Dashboard({ project, onToggle, onBack }) {
   const [infoStep, setInfoStep] = useState(null);
-
-  const steps = STEPS_BY_PROFILE[profile] || [];
-  const done = steps.filter(s => checklist[s.id]).length;
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const done = steps.filter(s => project.checklist[s.id]).length;
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
+  const nextStep = steps.find(s => !project.checklist[s.id]);
 
-  // Financial calcs
-  const prixVente = parseFloat(form.prixVente) || 0;
-  const capitalRestant = parseFloat(form.capitalRestant) || 0;
-  const netVendeur = prixVente - capitalRestant;
-  const apport = parseFloat(form.apport) || 0;
-  const prixBien = parseFloat(form.prixBien) || 0;
-  const revenus = parseFloat(form.revenus) || 0;
-  const duree = parseFloat(form.duree) || 25;
-  const taux = parseFloat(form.taux) || 3.5;
-  const neuf = form.neuf === "oui";
-  const fraisNotaire = prixBien ? calcNotaire(prixBien, neuf) : 0;
-  const capitalEmprunte = Math.max(0, prixBien - apport);
-  const mensualite = capitalEmprunte ? calcMensualite(capitalEmprunte, duree, taux) : 0;
-  const capacite = revenus ? calcEmprunt(revenus, duree, taux) : 0;
-  const loyerCible = parseFloat(form.loyerCible) || 0;
-  const chargesCopro = parseFloat(form.chargesCopro) || 0;
-  const rendement = prixBien && loyerCible ? calcRendement(prixBien, loyerCible, chargesCopro) : null;
-
-  const isVendeur = profile === "vendeur" || profile === "les-deux";
-  const isAcheteur = profile === "acheteur" || profile === "les-deux";
-  const isInvestisseur = profile === "investisseur";
-
-  // Group steps by phase
   const phases = {};
   steps.forEach(s => {
     const key = s.tag ? `${s.tag} — ${s.phase}` : s.phase;
@@ -462,81 +882,20 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
     phases[key].push(s);
   });
 
-  const phaseColors = {
-    "Préparation": "#f59e0b",
-    "Mise en vente": "#3b82f6",
-    "Compromis": "#8b5cf6",
-    "Finalisation": "#10b981",
-    "Recherche": "#06b6d4",
-    "Offre": "#f97316",
-    "Financement": "#ec4899",
-    "Stratégie": "#84cc16",
-    "Acquisition": "#6366f1",
-    "Mise en location": "#14b8a6",
-  };
-
-  function getPhaseColor(phaseKey) {
-    for (const [k, v] of Object.entries(phaseColors)) {
-      if (phaseKey.includes(k)) return v;
-    }
-    return "#94a3b8";
-  }
-
-  const TABS = [
-    { id: "checklist", label: "Étapes", icon: "✅" },
-    { id: "finances", label: "Finances", icon: "💶" },
-    { id: "docs", label: "Documents", icon: "📄" },
-  ];
-
-  const DOCS = {
-    vendeur: [
-      "Titre de propriété", "DPE", "Diagnostic loi Carrez", "Diagnostic électricité",
-      "Diagnostic gaz", "Diagnostic amiante", "Diagnostic plomb", "ERP (risques)",
-      "3 derniers appels de charges copro", "PV des 3 dernières AG",
-      "Règlement de copropriété", "Taxe foncière (dernier avis)",
-    ],
-    acheteur: [
-      "3 derniers bulletins de salaire", "2 derniers avis d'imposition",
-      "3 derniers relevés bancaires", "CNI ou passeport", "Justificatif de domicile",
-      "RIB", "Justificatifs d'épargne", "Tableau d'amortissement crédit en cours",
-      "Compromis de vente (si disponible)", "Accord de principe bancaire",
-    ],
-    investisseur: [
-      "3 derniers bulletins de salaire", "2 derniers avis d'imposition",
-      "3 derniers relevés bancaires", "CNI ou passeport", "Justificatif de domicile",
-      "RIB", "Justificatifs d'épargne", "Business plan locatif",
-      "Statuts SCI (si applicable)", "Kbis (si SCI)",
-    ],
-  };
-
-  const docsToShow = profile === "les-deux"
-    ? [...new Set([...DOCS.vendeur, ...DOCS.acheteur])]
-    : DOCS[profile] || DOCS.acheteur;
-
-  const [docsDone, setDocsDone] = useState({});
-  const toggleDoc = (d) => setDocsDone(prev => ({ ...prev, [d]: !prev[d] }));
-
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <InfoModal step={infoStep} onClose={() => setInfoStep(null)} />
       {/* Header */}
-      <div className="text-white px-5 pt-8 pb-16"
-        style={{ background: "#1a1a2e" }}>
+      <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
+          <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-4 transition-all">
+            ← Mes projets
+          </button>
           <div className="flex justify-between items-start mb-6">
-            <div>
-              <p className="text-slate-400 text-xs mb-1">Bonjour 👋</p>
-              <h1 className="text-2xl font-bold">
-                {form.prenom || "Mon projet"}
-              </h1>
-              <p className="text-slate-400 text-sm mt-0.5">
-                {PROFILES.find(p => p.id === profile)?.icon} {PROFILES.find(p => p.id === profile)?.label}
-              </p>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold truncate">{project.name}</h1>
+              <p className="text-slate-400 text-sm mt-0.5">{typeInfo?.icon} {typeInfo?.label}</p>
             </div>
-            <button onClick={onReset}
-              className="text-slate-500 hover:text-slate-300 text-xs border border-white/10 px-3 py-1.5 rounded-lg transition-all">
-              ↺ Recommencer
-            </button>
           </div>
           <div className="mb-2 flex justify-between text-sm">
             <span className="text-slate-300">Progression</span>
@@ -547,22 +906,49 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="max-w-2xl mx-auto px-5 -mt-8">
-        <div className="bg-white rounded-2xl shadow-lg p-1.5 flex gap-1 mb-5" style={{ border: "0.5px solid #e5e3df" }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === t.id ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:bg-slate-50"}`}>
-              <span>{t.icon}</span> <span>{t.label}</span>
-            </button>
-          ))}
-        </div>
+      <div className="max-w-2xl mx-auto px-5 -mt-8 pb-10 flex flex-col gap-4">
+        {/* Prochaine action */}
+        <Card>
+          <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+            <span>🎯</span> Prochaine action
+          </h3>
+          {nextStep ? (
+            <div className="flex items-start gap-3">
+              <button onClick={() => onToggle(nextStep.id)}
+                className="w-6 h-6 rounded-full border-2 border-slate-200 hover:border-blue-400 flex-shrink-0 mt-0.5 transition-all" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: IMPORTANCE[nextStep.importance]?.bg, color: IMPORTANCE[nextStep.importance]?.color }}>
+                    {IMPORTANCE[nextStep.importance]?.label}
+                  </span>
+                  <span className="text-xs text-slate-400">{nextStep.phase} · {nextStep.month}</span>
+                </div>
+                <div className="text-sm font-semibold text-slate-800">{nextStep.label}</div>
+              </div>
+              {nextStep.info && (
+                <button
+                  onClick={() => setInfoStep(nextStep)}
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                  style={{ background: "#e0f2fe", color: "#0369a1" }}
+                  title="Plus d'infos">
+                  i
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-green-700">🎉 Toutes les étapes sont complétées !</div>
+          )}
+        </Card>
 
-        {/* CHECKLIST TAB */}
-        {tab === "checklist" && (
-          <div className="flex flex-col gap-4 pb-10">
+        {/* Étapes */}
+        <div>
+          <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 px-1">
+            <span>📋</span> Étapes
+          </h3>
+          <div className="flex flex-col gap-4">
             {Object.entries(phases).map(([phase, items]) => {
-              const phaseDone = items.filter(s => checklist[s.id]).length;
+              const phaseDone = items.filter(s => project.checklist[s.id]).length;
               const phaseColor = getPhaseColor(phase);
               return (
                 <Card key={phase}>
@@ -579,11 +965,11 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
                       <div key={s.id} className="flex items-center gap-3 group">
                         <button onClick={() => onToggle(s.id)}
                           className="flex items-center gap-3 text-left flex-1 min-w-0">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${checklist[s.id] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-blue-400"}`}>
-                            {checklist[s.id] && <span className="text-white text-xs">✓</span>}
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${project.checklist[s.id] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-blue-400"}`}>
+                            {project.checklist[s.id] && <span className="text-white text-xs">✓</span>}
                           </div>
                           <div className="flex-1 flex items-center gap-2 min-w-0">
-                            <span className={`text-sm transition-all truncate ${checklist[s.id] ? "line-through text-slate-400" : "text-slate-700"}`}>
+                            <span className={`text-sm transition-all truncate ${project.checklist[s.id] ? "line-through text-slate-400" : "text-slate-700"}`}>
                               {s.label}
                             </span>
                             {s.tag && <Tag color={s.tag === "Vente" ? "vente" : "achat"}>{s.tag}</Tag>}
@@ -608,144 +994,7 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
               );
             })}
           </div>
-        )}
-
-        {/* FINANCES TAB */}
-        {tab === "finances" && (
-          <div className="flex flex-col gap-4 pb-10">
-            {isVendeur && (
-              <Card>
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                  <span className="text-amber-500">🏷️</span> Côté vente
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <Stat label="Prix de vente estimé" value={fmt(prixVente)} />
-                  <Stat label="Capital restant dû" value={fmt(capitalRestant)} />
-                  <Stat label="Net vendeur estimé" value={fmt(netVendeur)} accent={netVendeur > 0 ? "text-green-600" : "text-red-500"} sub="après remboursement crédit" />
-                </div>
-              </Card>
-            )}
-
-            {(isAcheteur || isInvestisseur) && (
-              <>
-                <Card>
-                  <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                    <span className="text-blue-500">💰</span> Capacité d'emprunt
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Stat label="Mensualité max (35%)" value={fmt(revenus * 0.35)} sub="taux d'endettement" />
-                    <Stat label="Capacité d'emprunt" value={fmt(capacite)} accent="text-blue-600" sub={`sur ${duree} ans à ${taux}%`} />
-                    <Stat label="Apport disponible" value={fmt(apport)} />
-                    <Stat label="Budget total possible" value={fmt(capacite + apport)} accent="text-green-600" />
-                  </div>
-                </Card>
-
-                {prixBien > 0 && (
-                  <Card>
-                    <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                      <span className="text-purple-500">🔑</span> Simulation achat à {fmt(prixBien)}
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <Stat label="Capital à emprunter" value={fmt(capitalEmprunte)} />
-                      <Stat label="Mensualité estimée" value={fmt(mensualite) + "/mois"} accent="text-blue-600" sub={`sur ${duree} ans`} />
-                      <Stat label="Frais de notaire" value={fmt(fraisNotaire)} sub={neuf ? "neuf (2,5%)" : "ancien (7,5%)"} />
-                      <Stat label="Coût total crédit" value={fmt(mensualite * duree * 12 - capitalEmprunte)} accent="text-red-500" sub="intérêts totaux" />
-                    </div>
-                    <div className="mt-4 p-3 rounded-xl text-sm"
-                      style={{ background: mensualite < revenus * 0.35 ? "#f0fdf4" : "#fef2f2" }}>
-                      {mensualite < revenus * 0.35
-                        ? <span className="text-green-700">✅ Mensualité dans votre capacité d'emprunt</span>
-                        : <span className="text-red-700">⚠️ Mensualité supérieure à votre taux d'endettement max</span>}
-                    </div>
-                  </Card>
-                )}
-              </>
-            )}
-
-            {isInvestisseur && rendement && (
-              <Card>
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                  <span className="text-green-500">📈</span> Rendement locatif
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <Stat label="Loyer annuel" value={fmt(loyerCible * 12)} />
-                  <Stat label="Rendement brut" value={fmtPct(rendement.brut)} accent="text-green-600" />
-                  <Stat label="Charges annuelles" value={fmt(chargesCopro * 12)} />
-                  <Stat label="Rendement net" value={fmtPct(rendement.net)} accent={rendement.net >= 4 ? "text-green-600" : "text-amber-600"} />
-                </div>
-                <div className="mt-4 p-3 rounded-xl text-sm"
-                  style={{ background: rendement.net >= 4 ? "#f0fdf4" : "#fffbeb" }}>
-                  {rendement.net >= 4
-                    ? <span className="text-green-700">✅ Rendement net attractif (&gt;4%)</span>
-                    : <span className="text-amber-700">⚠️ Rendement net faible — à négocier ou revoir les charges</span>}
-                </div>
-              </Card>
-            )}
-
-            {isVendeur && isAcheteur && (
-              <Card>
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                  <span className="text-indigo-500">🔄</span> Bilan global vente + achat
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <Stat label="Net vendeur" value={fmt(netVendeur)} />
-                  <Stat label="+ Épargne" value={fmt(apport - netVendeur)} sub="apport hors net vendeur" />
-                  <Stat label="Apport total" value={fmt(apport)} accent="text-blue-600" />
-                  <Stat label="Budget achat net notaire" value={fmt(prixBien + fraisNotaire)} />
-                </div>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* DOCS TAB */}
-        {tab === "docs" && (
-          <div className="flex flex-col gap-4 pb-10">
-            <Card>
-              <h3 className="font-bold text-slate-700 mb-1 flex items-center gap-2">
-                <span>📄</span> Documents à réunir
-              </h3>
-              <p className="text-xs text-slate-400 mb-4">Cochez les documents au fur et à mesure</p>
-              <div className="mb-2">
-                <ProgressBar value={Object.values(docsDone).filter(Boolean).length} max={docsToShow.length} color="#10b981" />
-                <div className="text-right text-xs text-slate-400 mt-1">
-                  {Object.values(docsDone).filter(Boolean).length}/{docsToShow.length} réunis
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 mt-3">
-                {docsToShow.map(d => (
-                  <button key={d} onClick={() => toggleDoc(d)}
-                    className="flex items-center gap-3 text-left group">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${docsDone[d] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-green-400"}`}>
-                      {docsDone[d] && <span className="text-white text-xs">✓</span>}
-                    </div>
-                    <span className={`text-sm ${docsDone[d] ? "line-through text-slate-400" : "text-slate-700"}`}>{d}</span>
-                  </button>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                <span>💡</span> Conseils clés
-              </h3>
-              <div className="flex flex-col gap-2">
-                {[
-                  "Consultez un courtier dès le début — l'accord de principe renforce votre dossier acheteur",
-                  "Conservez 10-15k€ de réserve même après l'apport (imprévus, travaux)",
-                  "Vérifiez les PV d'AG avant toute offre — travaux votés = charges futures",
-                  "Négociez l'assurance emprunteur en délégation (économie de 10-30k€)",
-                  "Pour une indivision, rédigez une convention chez le notaire dès l'achat",
-                ].map((tip, i) => (
-                  <div key={i} className="flex gap-2 text-sm text-slate-600 p-3 bg-blue-50 rounded-xl">
-                    <span className="text-blue-400 flex-shrink-0">→</span>
-                    <span>{tip}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -754,71 +1003,88 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState("loading");
-  const [profile, setProfile] = useState(null);
-  const [form, setForm] = useState({});
-  const [checklist, setChecklist] = useState({});
+  const [projects, setProjects] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [draftType, setDraftType] = useState(null);
 
   useEffect(() => {
     loadData().then(d => {
-      if (d?.profile && d?.form) {
-        setProfile(d.profile);
-        setForm(d.form);
-        setChecklist(d.checklist || {});
-        setScreen("dashboard");
-      } else {
-        setScreen("welcome");
-      }
+      const projs = d?.projects || [];
+      setProjects(projs);
+      setActiveId(d?.activeId || null);
+      setScreen(projs.length > 0 ? "projects" : "new-type");
     });
   }, []);
 
-  const persist = useCallback((p, f, c) => {
-    saveData({ profile: p, form: f, checklist: c });
+  const persist = useCallback((projs, active) => {
+    saveData({ projects: projs, activeId: active });
   }, []);
 
-  const handleProfileSelect = (p) => {
-    setProfile(p);
-    setScreen("onboarding");
+  const openProjectsList = () => setScreen("projects");
+
+  const startNewProject = () => {
+    setDraftType(null);
+    setScreen("new-type");
   };
 
-  const handleOnboardingDone = (f) => {
-    setForm(f);
+  const selectType = (typeId) => {
+    setDraftType(typeId);
+    setScreen("new-details");
+  };
+
+  const createProject = ({ name, startDate }) => {
+    const typeLabel = PROJECT_TYPES.find(t => t.id === draftType)?.label || "Projet";
+    const project = {
+      id: uid(),
+      name: name || typeLabel,
+      type: draftType,
+      createdAt: new Date().toISOString(),
+      startDate,
+      checklist: {},
+    };
+    const next = [...projects, project];
+    setProjects(next);
+    setActiveId(project.id);
+    persist(next, project.id);
     setScreen("dashboard");
-    persist(profile, f, {});
   };
 
-  const handleToggle = (id) => {
-    setChecklist(prev => {
-      const next = { ...prev, [id]: !prev[id] };
-      persist(profile, form, next);
+  const openProject = (id) => {
+    setActiveId(id);
+    persist(projects, id);
+    setScreen("dashboard");
+  };
+
+  const toggleStep = (stepId) => {
+    setProjects(prev => {
+      const next = prev.map(p => p.id === activeId
+        ? { ...p, checklist: { ...p.checklist, [stepId]: !p.checklist[stepId] } }
+        : p);
+      persist(next, activeId);
       return next;
     });
   };
 
-  const handleReset = () => {
-    saveData(null);
-    setProfile(null);
-    setForm({});
-    setChecklist({});
-    setScreen("welcome");
-  };
+  const activeProject = projects.find(p => p.id === activeId);
 
   let content;
   if (screen === "loading") {
     content = (
-      <div className="min-h-screen flex items-center justify-center"
-        style={{ background: "#1a1a2e" }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#1a1a2e" }}>
         <div className="text-white text-center">
           <div className="text-4xl mb-3">🏠</div>
           <p className="text-slate-400 text-sm">Chargement…</p>
         </div>
       </div>
     );
-  } else if (screen === "welcome") {
-    content = <WelcomeScreen onSelect={handleProfileSelect} />;
-  } else if (screen === "onboarding") {
-    content = <OnboardingScreen profile={profile} onDone={handleOnboardingDone} />;
+  } else if (screen === "new-type") {
+    content = <NewProjectTypeScreen onSelect={selectType} onBack={projects.length > 0 ? openProjectsList : null} />;
+  } else if (screen === "new-details") {
+    content = <NewProjectDetailsScreen type={draftType} onCreate={createProject} onBack={() => setScreen("new-type")} />;
+  } else if (screen === "dashboard" && activeProject) {
+    content = <Dashboard project={activeProject} onToggle={toggleStep} onBack={openProjectsList} />;
   } else {
-    content = <Dashboard profile={profile} form={form} checklist={checklist} onToggle={handleToggle} onReset={handleReset} />;
+    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} />;
   }
 
   return (
