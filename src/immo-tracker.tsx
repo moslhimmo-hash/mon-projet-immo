@@ -746,6 +746,7 @@ function Input({ label, value, onChange, type = "text", placeholder }) {
 
 // ─── SCREENS ──────────────────────────────────────────────────────────────────
 function NewProjectTypeScreen({ onSelect, onBack }) {
+  const isHome = !onBack;
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
       style={{ background: "#1a1a2e" }}>
@@ -759,8 +760,8 @@ function NewProjectTypeScreen({ onSelect, onBack }) {
           <div className="mx-auto mb-4 flex items-center justify-center" style={{ width: 64, height: 64, background: "#2563eb", borderRadius: "12px" }}>
             <span style={{ fontSize: 32 }}>🏠</span>
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">Nouveau projet</h1>
-          <p className="text-slate-400 text-sm">Quel type de projet voulez-vous suivre ?</p>
+          <h1 className="text-2xl font-bold text-white mb-2">{isHome ? "Cozimo" : "Nouveau projet"}</h1>
+          <p className="text-slate-400 text-sm">{isHome ? "Votre projet immobilier, de A à Z" : "Quel type de projet voulez-vous suivre ?"}</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           {PROJECT_TYPES.map(t => (
@@ -1014,6 +1015,10 @@ export default function App() {
       setActiveId(d?.activeId || null);
       setScreen(projs.length > 0 ? "projects" : "new-type");
     });
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") document.title = "Cozimo";
   }, []);
 
   const persist = useCallback((projs, active) => {
