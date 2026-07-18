@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
--font-display:
+:root {
+  --font-display:
     Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
     Segoe UI Symbol, Noto Color Emoji;
   --font-mono:

@@ -227,7 +227,7 @@ function ProgressBar({ value, max, color = "#2563eb" }) {
 
 function Card({ children, className = "" }) {
   return (
-    <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 p-5 ${className}`}>
+    <div className={`bg-white rounded-2xl shadow-sm p-5 ${className}`} style={{ border: "0.5px solid #e5e3df" }}>
       {children}
     </div>
   );
@@ -285,11 +285,13 @@ const fmtPct = n => isNaN(n) || !isFinite(n) ? "—" : n.toFixed(2) + " %";
 function WelcomeScreen({ onSelect }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
-      style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #0f172a 100%)" }}>
+      style={{ background: "#1a1a2e" }}>
       <div className="max-w-lg w-full">
         <div className="text-center mb-10">
-          <div className="text-5xl mb-4">🏠</div>
-          <h1 className="text-3xl font-bold text-white mb-2" style={{ fontFamily: "'Georgia', serif" }}>
+          <div className="mx-auto mb-4 flex items-center justify-center" style={{ width: 64, height: 64, background: "#2563eb", borderRadius: "12px" }}>
+            <span style={{ fontSize: 32 }}>🏠</span>
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-2">
             Mon Projet Immo
           </h1>
           <p className="text-slate-400 text-sm">Suivez chaque étape de votre projet immobilier, de A à Z</p>
@@ -299,7 +301,8 @@ function WelcomeScreen({ onSelect }) {
             <button
               key={p.id}
               onClick={() => onSelect(p.id)}
-              className="group bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 rounded-2xl p-5 text-left transition-all duration-200 hover:scale-105"
+              className="group bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/30 p-5 text-left transition-all duration-200 hover:scale-105"
+              style={{ borderRadius: "14px" }}
             >
               <div className="text-3xl mb-2">{p.icon}</div>
               <div className="text-white font-semibold text-sm">{p.label}</div>
@@ -387,7 +390,7 @@ function OnboardingScreen({ profile, onDone }) {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6"
-      style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 60%, #0f172a 100%)" }}>
+      style={{ background: "#1a1a2e" }}>
       <div className="max-w-md w-full">
         <div className="mb-6">
           <div className="flex gap-1.5 mb-6">
@@ -397,7 +400,7 @@ function OnboardingScreen({ profile, onDone }) {
             ))}
           </div>
           <p className="text-slate-400 text-xs mb-1">Étape {step + 1} / {steps.length}</p>
-          <h2 className="text-xl font-bold text-white" style={{ fontFamily: "'Georgia', serif" }}>{cur.title}</h2>
+          <h2 className="text-xl font-bold text-white">{cur.title}</h2>
         </div>
         <Card>
           {cur.fields}
@@ -514,16 +517,16 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
   const toggleDoc = (d) => setDocsDone(prev => ({ ...prev, [d]: !prev[d] }));
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <InfoModal step={infoStep} onClose={() => setInfoStep(null)} />
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16"
-        style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)" }}>
+        style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex justify-between items-start mb-6">
             <div>
               <p className="text-slate-400 text-xs mb-1">Bonjour 👋</p>
-              <h1 className="text-2xl font-bold" style={{ fontFamily: "'Georgia', serif" }}>
+              <h1 className="text-2xl font-bold">
                 {form.prenom || "Mon projet"}
               </h1>
               <p className="text-slate-400 text-sm mt-0.5">
@@ -546,7 +549,7 @@ function Dashboard({ profile, form, checklist, onToggle, onReset }) {
 
       {/* Tabs */}
       <div className="max-w-2xl mx-auto px-5 -mt-8">
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-1.5 flex gap-1 mb-5">
+        <div className="bg-white rounded-2xl shadow-lg p-1.5 flex gap-1 mb-5" style={{ border: "0.5px solid #e5e3df" }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === t.id ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:bg-slate-50"}`}>
@@ -799,19 +802,32 @@ export default function App() {
     setScreen("welcome");
   };
 
+  let content;
   if (screen === "loading") {
-    return (
+    content = (
       <div className="min-h-screen flex items-center justify-center"
-        style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)" }}>
+        style={{ background: "#1a1a2e" }}>
         <div className="text-white text-center">
           <div className="text-4xl mb-3">🏠</div>
           <p className="text-slate-400 text-sm">Chargement…</p>
         </div>
       </div>
     );
+  } else if (screen === "welcome") {
+    content = <WelcomeScreen onSelect={handleProfileSelect} />;
+  } else if (screen === "onboarding") {
+    content = <OnboardingScreen profile={profile} onDone={handleOnboardingDone} />;
+  } else {
+    content = <Dashboard profile={profile} form={form} checklist={checklist} onToggle={handleToggle} onReset={handleReset} />;
   }
 
-  if (screen === "welcome") return <WelcomeScreen onSelect={handleProfileSelect} />;
-  if (screen === "onboarding") return <OnboardingScreen profile={profile} onDone={handleOnboardingDone} />;
-  return <Dashboard profile={profile} form={form} checklist={checklist} onToggle={handleToggle} onReset={handleReset} />;
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
+        * { font-family: 'Outfit', sans-serif; }
+      `}</style>
+      {content}
+    </>
+  );
 }
