@@ -682,6 +682,55 @@ function fmtDate(iso) {
   return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
 }
 
+function getDeadlineInfo(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const deadline = new Date(`${dateStr}T00:00:00`);
+  if (isNaN(deadline.getTime())) return null;
+  const diffDays = Math.round((deadline - today) / 86400000);
+  if (diffDays < 0) return { diffDays, color: "#b91c1c", bg: "#fee2e2", label: "En retard !" };
+  if (diffDays < 3) return { diffDays, color: "#b91c1c", bg: "#fee2e2", label: `J-${diffDays}` };
+  if (diffDays <= 7) return { diffDays, color: "#b45309", bg: "#fef3c7", label: `J-${diffDays}` };
+  return { diffDays, color: "#047857", bg: "#d1fae5", label: `J-${diffDays}` };
+}
+
+// Sends browser notifications for deadlines hitting J-7 / J-3 / J-0, once per milestone.
+function checkDeadlineNotifications(projects) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") {
+    return { changed: false, projects };
+  }
+  let changed = false;
+  const next = projects.map(p => {
+    const steps = STEPS_BY_TYPE[p.type] || [];
+    const deadlines = p.deadlines || {};
+    const notified = { ...(p.notifiedDeadlines || {}) };
+    let projectChanged = false;
+    Object.entries(deadlines).forEach(([stepId, dateStr]) => {
+      if (p.checklist[stepId]) return;
+      const info = getDeadlineInfo(dateStr);
+      if (!info) return;
+      const milestone = info.diffDays === 7 ? "d7" : info.diffDays === 3 ? "d3" : info.diffDays === 0 ? "d0" : null;
+      if (!milestone) return;
+      const key = `${stepId}:${milestone}`;
+      if (notified[key]) return;
+      const step = steps.find(s => s.id === stepId);
+      if (!step) return;
+      const messages = {
+        d7: `📅 Échéance dans 7 jours : ${step.label}`,
+        d3: `⚠️ Échéance dans 3 jours : ${step.label}`,
+        d0: `🚨 Échéance aujourd'hui : ${step.label}`,
+      };
+      new Notification("Cozimo", { body: messages[milestone] });
+      notified[key] = true;
+      projectChanged = true;
+      changed = true;
+    });
+    return projectChanged ? { ...p, notifiedDeadlines: notified } : p;
+  });
+  return { changed, projects: next };
+}
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
@@ -1181,6 +1230,8 @@ const DASHBOARD_TABS = [
 function Dashboard({ project, onUpdate, onBack }) {
   const [tab, setTab] = useState("accueil");
   const [infoStep, setInfoStep] = useState(null);
+  const [editingDeadline, setEditingDeadline] = useState(null);
+  const [tempDate, setTempDate] = useState("");
   const steps = STEPS_BY_TYPE[project.type] || [];
   const done = steps.filter(s => project.checklist[s.id]).length;
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
@@ -1194,6 +1245,12 @@ function Dashboard({ project, onUpdate, onBack }) {
     phases[key].push(s);
   });
 
+  const upcomingDeadlines = steps
+    .filter(s => project.deadlines?.[s.id] && !project.checklist[s.id])
+    .map(s => ({ step: s, info: getDeadlineInfo(project.deadlines[s.id]) }))
+    .sort((a, b) => a.info.diffDays - b.info.diffDays)
+    .slice(0, 3);
+
   const toggleStep = (stepId) => {
     onUpdate(p => ({
       ...p,
@@ -1203,6 +1260,29 @@ function Dashboard({ project, onUpdate, onBack }) {
   const addContact = (contact) => onUpdate(p => ({ ...p, contacts: [...(p.contacts || []), contact] }));
   const deleteContact = (id) => onUpdate(p => ({ ...p, contacts: (p.contacts || []).filter(c => c.id !== id) }));
   const addJournalEntry = (entry) => onUpdate(p => ({ ...p, journal: [...(p.journal || []), entry] }));
+
+  const openDeadlineEditor = (stepId) => {
+    setTempDate(project.deadlines?.[stepId] || "");
+    setEditingDeadline(editingDeadline === stepId ? null : stepId);
+  };
+  const saveDeadline = (stepId, dateStr) => {
+    if (!dateStr) return;
+    onUpdate(p => ({ ...p, deadlines: { ...(p.deadlines || {}), [stepId]: dateStr } }));
+    setEditingDeadline(null);
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      if (window.confirm("Voulez-vous activer les notifications pour être prévenu avant cette échéance ?")) {
+        Notification.requestPermission();
+      }
+    }
+  };
+  const removeDeadline = (stepId) => {
+    onUpdate(p => {
+      const next = { ...(p.deadlines || {}) };
+      delete next[stepId];
+      return { ...p, deadlines: next };
+    });
+    setEditingDeadline(null);
+  };
 
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
@@ -1275,6 +1355,28 @@ function Dashboard({ project, onUpdate, onBack }) {
               )}
             </Card>
 
+            {/* Échéances proches */}
+            {upcomingDeadlines.length > 0 && (
+              <Card>
+                <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                  <span>⏰</span> Échéances proches
+                </h3>
+                <div className="flex flex-col gap-2">
+                  {upcomingDeadlines.map(({ step: s, info }) => (
+                    <div key={s.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-700 truncate">{s.label}</div>
+                        <div className="text-xs text-slate-400">{s.phase}</div>
+                      </div>
+                      <span className="text-xs font-bold px-2 py-1 rounded-full flex-shrink-0" style={{ background: info.bg, color: info.color }}>
+                        {info.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
             {/* Étapes */}
             <div>
               <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 px-1">
@@ -1295,8 +1397,12 @@ function Dashboard({ project, onUpdate, onBack }) {
                       </div>
                       <ProgressBar value={phaseDone} max={items.length} color={phaseColor} />
                       <div className="flex flex-col gap-2 mt-3">
-                        {items.map(s => (
-                          <div key={s.id} className="flex items-center gap-3 group">
+                        {items.map(s => {
+                          const deadline = project.deadlines?.[s.id];
+                          const deadlineInfo = deadline ? getDeadlineInfo(deadline) : null;
+                          return (
+                          <div key={s.id} className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-3 group">
                             <button onClick={() => toggleStep(s.id)}
                               className="flex items-center gap-3 text-left flex-1 min-w-0">
                               <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${project.checklist[s.id] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-blue-400"}`}>
@@ -1311,6 +1417,18 @@ function Dashboard({ project, onUpdate, onBack }) {
                             </button>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span className="text-xs text-slate-300">{s.month}</span>
+                              {deadlineInfo && (
+                                <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ background: deadlineInfo.bg, color: deadlineInfo.color }}>
+                                  {deadlineInfo.label}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => openDeadlineEditor(s.id)}
+                                className="w-5 h-5 rounded-full flex items-center justify-center text-xs transition-all flex-shrink-0"
+                                style={{ background: deadline ? "#fef3c7" : "#f1f5f9", color: deadline ? "#b45309" : "#64748b" }}
+                                title="Définir une échéance">
+                                📅
+                              </button>
                               {s.info && (
                                 <button
                                   onClick={() => setInfoStep(s)}
@@ -1322,7 +1440,33 @@ function Dashboard({ project, onUpdate, onBack }) {
                               )}
                             </div>
                           </div>
-                        ))}
+                          {editingDeadline === s.id && (
+                            <div className="flex items-center gap-2 ml-8 flex-wrap">
+                              <input
+                                type="date"
+                                value={tempDate}
+                                onChange={e => setTempDate(e.target.value)}
+                                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                              />
+                              <button onClick={() => saveDeadline(s.id, tempDate)}
+                                className="text-xs font-semibold text-blue-600 hover:underline">
+                                Enregistrer
+                              </button>
+                              {deadline && (
+                                <button onClick={() => removeDeadline(s.id)}
+                                  className="text-xs font-semibold text-red-500 hover:underline">
+                                  Supprimer
+                                </button>
+                              )}
+                              <button onClick={() => setEditingDeadline(null)}
+                                className="text-xs text-slate-400 hover:underline">
+                                Annuler
+                              </button>
+                            </div>
+                          )}
+                          </div>
+                          );
+                        })}
                       </div>
                     </Card>
                   );
@@ -1350,9 +1494,14 @@ export default function App() {
   useEffect(() => {
     loadData().then(d => {
       const projs = d?.projects || [];
-      setProjects(projs);
-      setActiveId(d?.activeId || null);
+      const activeIdLoaded = d?.activeId || null;
+      setActiveId(activeIdLoaded);
       setScreen(projs.length > 0 ? "projects" : "new-type");
+
+      // Vérifie les échéances au chargement de l'app et notifie si nécessaire.
+      const { changed, projects: checked } = checkDeadlineNotifications(projs);
+      setProjects(checked);
+      if (changed) saveData({ projects: checked, activeId: activeIdLoaded });
     });
   }, []);
 
@@ -1388,6 +1537,8 @@ export default function App() {
       budget: {},
       contacts: [],
       journal: [],
+      deadlines: {},
+      notifiedDeadlines: {},
     };
     const next = [...projects, project];
     setProjects(next);
