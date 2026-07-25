@@ -39,6 +39,26 @@ const IMPORTANCE = {
   utile: { label: "Utile", color: "#047857", bg: "#d1fae5" },
 };
 
+const CONTACT_ROLES = [
+  { value: "courtier", label: "Courtier" },
+  { value: "notaire", label: "Notaire" },
+  { value: "agent", label: "Agent immobilier" },
+  { value: "banquier", label: "Banquier" },
+  { value: "artisan", label: "Artisan" },
+  { value: "diagnostiqueur", label: "Diagnostiqueur" },
+  { value: "autre", label: "Autre" },
+];
+
+const JOURNAL_TYPES = {
+  etape: { label: "Étape accomplie", icon: "✅", color: "#047857", bg: "#d1fae5" },
+  note: { label: "Note personnelle", icon: "📝", color: "#1d4ed8", bg: "#dbeafe" },
+  document: { label: "Document reçu", icon: "📄", color: "#7c3aed", bg: "#ede9fe" },
+  rdv: { label: "RDV", icon: "📅", color: "#b45309", bg: "#fef3c7" },
+  autre: { label: "Autre", icon: "🔖", color: "#475569", bg: "#f1f5f9" },
+};
+
+const JOURNAL_TYPE_OPTIONS = Object.entries(JOURNAL_TYPES).map(([value, v]) => ({ value, label: `${v.icon} ${v.label}` }));
+
 // ─── STEP DATA ────────────────────────────────────────────────────────────────
 function step(phase, label, month, importance, info) {
   return { phase, label, month, importance, info };
@@ -648,6 +668,20 @@ function getPhaseColor(phaseKey) {
   return "#94a3b8";
 }
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function calcNotaire(prix, neuf = false) {
+  return neuf ? prix * 0.025 : prix * 0.075;
+}
+
+const fmt = n => isNaN(n) || !isFinite(n) ? "—" : Math.round(n).toLocaleString("fr-FR") + " €";
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+}
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
@@ -729,17 +763,46 @@ function Card({ children, className = "" }) {
   );
 }
 
-function Input({ label, value, onChange, type = "text", placeholder }) {
+function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
-      <input
-        type={type}
+      <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white">
+        {prefix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-r border-slate-200 py-2.5">{prefix}</span>}
+        <input
+          type={type}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 px-3 py-2.5 text-sm outline-none bg-transparent"
+        />
+        {suffix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-l border-slate-200 py-2.5">{suffix}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
+      <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
         className="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-      />
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub, accent }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className={`text-xl font-bold ${accent || "text-slate-800"}`}>{value}</span>
+      {sub && <span className="text-xs text-slate-400">{sub}</span>}
     </div>
   );
 }
@@ -868,7 +931,255 @@ function ProjectsScreen({ projects, onOpen, onCreate }) {
   );
 }
 
-function Dashboard({ project, onToggle, onBack }) {
+function BudgetTab({ project, onUpdate }) {
+  const b = project.budget || {};
+  const set = (k, v) => onUpdate(p => ({ ...p, budget: { ...(p.budget || {}), [k]: v } }));
+
+  const prixAchat = parseFloat(b.prixAchat) || 0;
+  const neuf = !!b.neuf;
+  const fraisNotaire = calcNotaire(prixAchat, neuf);
+  const fraisAgence = parseFloat(b.fraisAgence) || 0;
+  const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
+  const mobilier = parseFloat(b.mobilier) || 0;
+  const electromenager = parseFloat(b.electromenager) || 0;
+  const fraisBancaires = parseFloat(b.fraisBancaires) || 0;
+  const assurance = parseFloat(b.assurance) || 0;
+  const taxeFonciere = parseFloat(b.taxeFonciere) || 0;
+  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
+
+  const postes = [
+    { key: "prixAchat", label: "Prix d'achat", value: prixAchat, color: "#2563eb" },
+    { key: "fraisNotaire", label: "Frais de notaire", value: fraisNotaire, color: "#8b5cf6" },
+    { key: "fraisAgence", label: "Frais d'agence", value: fraisAgence, color: "#f97316" },
+    { key: "budgetTravaux", label: "Budget travaux", value: budgetTravaux, color: "#f59e0b" },
+    { key: "mobilier", label: "Mobilier", value: mobilier, color: "#14b8a6" },
+    { key: "electromenager", label: "Électroménager", value: electromenager, color: "#06b6d4" },
+    { key: "fraisBancaires", label: "Frais bancaires", value: fraisBancaires, color: "#ec4899" },
+    { key: "assurance", label: "Assurance", value: assurance, color: "#84cc16" },
+    { key: "taxeFonciere", label: "Taxe foncière (annuelle)", value: taxeFonciere, color: "#94a3b8" },
+  ];
+
+  const totalEngage = postes.reduce((sum, p) => sum + p.value, 0);
+  const resteDisponible = budgetGlobal - totalEngage;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <span>💶</span> Budget global
+        </h3>
+        <Input label="Budget global disponible" value={b.budgetGlobal || ""} onChange={v => set("budgetGlobal", v)} type="number" suffix="€" placeholder="350000" />
+      </Card>
+
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4">Récapitulatif</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <Stat label="Total engagé" value={fmt(totalEngage)} accent="text-blue-600" />
+          <Stat label="Reste disponible" value={fmt(resteDisponible)} accent={resteDisponible >= 0 ? "text-green-600" : "text-red-500"} />
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4">Postes de dépenses</h3>
+        <div className="flex flex-col gap-4">
+          <Input label="Prix d'achat" value={b.prixAchat || ""} onChange={v => set("prixAchat", v)} type="number" suffix="€" />
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={neuf} onChange={e => set("neuf", e.target.checked)} />
+            Bien neuf (frais de notaire à 2,5% au lieu de 7,5%)
+          </label>
+          <Stat label="Frais de notaire (calculé auto)" value={fmt(fraisNotaire)} sub={neuf ? "2,5% — neuf" : "7,5% — ancien"} />
+          <Input label="Frais d'agence" value={b.fraisAgence || ""} onChange={v => set("fraisAgence", v)} type="number" suffix="€" />
+          <Input label="Budget travaux" value={b.budgetTravaux || ""} onChange={v => set("budgetTravaux", v)} type="number" suffix="€" />
+          <Input label="Mobilier" value={b.mobilier || ""} onChange={v => set("mobilier", v)} type="number" suffix="€" />
+          <Input label="Électroménager" value={b.electromenager || ""} onChange={v => set("electromenager", v)} type="number" suffix="€" />
+          <Input label="Frais bancaires" value={b.fraisBancaires || ""} onChange={v => set("fraisBancaires", v)} type="number" suffix="€" />
+          <Input label="Assurance" value={b.assurance || ""} onChange={v => set("assurance", v)} type="number" suffix="€" />
+          <Input label="Taxe foncière annuelle" value={b.taxeFonciere || ""} onChange={v => set("taxeFonciere", v)} type="number" suffix="€" />
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4">Répartition des dépenses</h3>
+        {totalEngage === 0 ? (
+          <p className="text-sm text-slate-400">Ajoutez des postes de dépenses pour voir la répartition.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {postes.filter(p => p.value > 0).map(p => (
+              <div key={p.key}>
+                <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <span>{p.label}</span>
+                  <span className="font-semibold text-slate-600">{fmt(p.value)}</span>
+                </div>
+                <ProgressBar value={p.value} max={totalEngage} color={p.color} />
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ContactCard({ contact, onDelete }) {
+  const roleLabel = CONTACT_ROLES.find(r => r.value === contact.role)?.label || "Autre";
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div>
+          <div className="font-bold text-slate-800 text-sm">{contact.nom}</div>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">{roleLabel}</span>
+        </div>
+        <button onClick={() => onDelete(contact.id)}
+          className="text-slate-300 hover:text-red-500 text-xs w-6 h-6 flex items-center justify-center flex-shrink-0 transition-all">
+          ✕
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5 mt-2">
+        {contact.telephone && (
+          <a href={`tel:${contact.telephone}`} className="flex items-center gap-2 text-sm text-blue-600 hover:underline">
+            📞 {contact.telephone}
+          </a>
+        )}
+        {contact.email && (
+          <a href={`mailto:${contact.email}`} className="flex items-center gap-2 text-sm text-blue-600 hover:underline">
+            ✉️ {contact.email}
+          </a>
+        )}
+        {contact.notes && <p className="text-xs text-slate-500 mt-1">{contact.notes}</p>}
+      </div>
+    </Card>
+  );
+}
+
+function ContactsTab({ project, onAdd, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ nom: "", role: "courtier", telephone: "", email: "", notes: "" });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const contacts = project.contacts || [];
+
+  const submit = () => {
+    if (!form.nom.trim()) return;
+    onAdd({ id: uid(), ...form });
+    setForm({ nom: "", role: "courtier", telephone: "", email: "", notes: "" });
+    setOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+        {open ? "✕ Annuler" : "+ Ajouter un contact"}
+      </button>
+      {open && (
+        <Card>
+          <div className="flex flex-col gap-4">
+            <Input label="Nom" value={form.nom} onChange={v => set("nom", v)} placeholder="Ex : Marie Dupont" />
+            <Select label="Rôle" value={form.role} onChange={v => set("role", v)} options={CONTACT_ROLES} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => set("telephone", v)} type="tel" placeholder="06 12 34 56 78" />
+            <Input label="Email" value={form.email} onChange={v => set("email", v)} type="email" placeholder="marie@exemple.fr" />
+            <Input label="Notes" value={form.notes} onChange={v => set("notes", v)} placeholder="Optionnel" />
+            <button onClick={submit}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold transition-all">
+              Enregistrer le contact
+            </button>
+          </div>
+        </Card>
+      )}
+      {contacts.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-4">Aucun contact pour ce projet pour l'instant.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {contacts.map(c => <ContactCard key={c.id} contact={c} onDelete={onDelete} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JournalTab({ project, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), title: "", description: "", type: "note" });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const stepEntries = steps
+    .filter(s => project.checklist[s.id])
+    .map(s => ({
+      id: `auto-${s.id}`,
+      date: project.checklist[s.id],
+      title: s.label,
+      description: s.tag ? `${s.tag} — ${s.phase}` : s.phase,
+      type: "etape",
+    }));
+
+  const manualEntries = project.journal || [];
+  const allEntries = [...stepEntries, ...manualEntries].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  const submit = () => {
+    if (!form.title.trim()) return;
+    onAdd({ id: uid(), ...form });
+    setForm({ date: new Date().toISOString().slice(0, 10), title: "", description: "", type: "note" });
+    setOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+        {open ? "✕ Annuler" : "+ Ajouter une entrée"}
+      </button>
+      {open && (
+        <Card>
+          <div className="flex flex-col gap-4">
+            <Input label="Date" value={form.date} onChange={v => set("date", v)} type="date" />
+            <Select label="Type" value={form.type} onChange={v => set("type", v)} options={JOURNAL_TYPE_OPTIONS} />
+            <Input label="Titre" value={form.title} onChange={v => set("title", v)} placeholder="Ex : Signature du compromis" />
+            <Input label="Description" value={form.description} onChange={v => set("description", v)} placeholder="Optionnel" />
+            <button onClick={submit}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold transition-all">
+              Ajouter au journal
+            </button>
+          </div>
+        </Card>
+      )}
+      {allEntries.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-4">Aucune entrée pour l'instant.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {allEntries.map(e => {
+            const meta = JOURNAL_TYPES[e.type] || JOURNAL_TYPES.autre;
+            return (
+              <Card key={e.id}>
+                <div className="flex items-start gap-3">
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: meta.bg, color: meta.color }}>
+                    {meta.icon} {meta.label}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-slate-800 text-sm">{e.title}</div>
+                      <span className="text-xs text-slate-400 flex-shrink-0">{fmtDate(e.date)}</span>
+                    </div>
+                    {e.description && <p className="text-xs text-slate-500 mt-1">{e.description}</p>}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DASHBOARD_TABS = [
+  { id: "accueil", label: "Accueil", icon: "🏠" },
+  { id: "budget", label: "Budget", icon: "💶" },
+  { id: "contacts", label: "Contacts", icon: "📇" },
+  { id: "journal", label: "Journal", icon: "📓" },
+];
+
+function Dashboard({ project, onUpdate, onBack }) {
+  const [tab, setTab] = useState("accueil");
   const [infoStep, setInfoStep] = useState(null);
   const steps = STEPS_BY_TYPE[project.type] || [];
   const done = steps.filter(s => project.checklist[s.id]).length;
@@ -882,6 +1193,16 @@ function Dashboard({ project, onToggle, onBack }) {
     if (!phases[key]) phases[key] = [];
     phases[key].push(s);
   });
+
+  const toggleStep = (stepId) => {
+    onUpdate(p => ({
+      ...p,
+      checklist: { ...p.checklist, [stepId]: p.checklist[stepId] ? false : new Date().toISOString() },
+    }));
+  };
+  const addContact = (contact) => onUpdate(p => ({ ...p, contacts: [...(p.contacts || []), contact] }));
+  const deleteContact = (id) => onUpdate(p => ({ ...p, contacts: (p.contacts || []).filter(c => c.id !== id) }));
+  const addJournalEntry = (entry) => onUpdate(p => ({ ...p, journal: [...(p.journal || []), entry] }));
 
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
@@ -908,94 +1229,112 @@ function Dashboard({ project, onToggle, onBack }) {
       </div>
 
       <div className="max-w-2xl mx-auto px-5 -mt-8 pb-10 flex flex-col gap-4">
-        {/* Prochaine action */}
-        <Card>
-          <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-            <span>🎯</span> Prochaine action
-          </h3>
-          {nextStep ? (
-            <div className="flex items-start gap-3">
-              <button onClick={() => onToggle(nextStep.id)}
-                className="w-6 h-6 rounded-full border-2 border-slate-200 hover:border-blue-400 flex-shrink-0 mt-0.5 transition-all" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: IMPORTANCE[nextStep.importance]?.bg, color: IMPORTANCE[nextStep.importance]?.color }}>
-                    {IMPORTANCE[nextStep.importance]?.label}
-                  </span>
-                  <span className="text-xs text-slate-400">{nextStep.phase} · {nextStep.month}</span>
-                </div>
-                <div className="text-sm font-semibold text-slate-800">{nextStep.label}</div>
-              </div>
-              {nextStep.info && (
-                <button
-                  onClick={() => setInfoStep(nextStep)}
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                  style={{ background: "#e0f2fe", color: "#0369a1" }}
-                  title="Plus d'infos">
-                  i
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="text-sm text-green-700">🎉 Toutes les étapes sont complétées !</div>
-          )}
-        </Card>
-
-        {/* Étapes */}
-        <div>
-          <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 px-1">
-            <span>📋</span> Étapes
-          </h3>
-          <div className="flex flex-col gap-4">
-            {Object.entries(phases).map(([phase, items]) => {
-              const phaseDone = items.filter(s => project.checklist[s.id]).length;
-              const phaseColor = getPhaseColor(phase);
-              return (
-                <Card key={phase}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ background: phaseColor }} />
-                      <span className="font-bold text-slate-700 text-sm">{phase}</span>
-                    </div>
-                    <span className="text-xs text-slate-400">{phaseDone}/{items.length}</span>
-                  </div>
-                  <ProgressBar value={phaseDone} max={items.length} color={phaseColor} />
-                  <div className="flex flex-col gap-2 mt-3">
-                    {items.map(s => (
-                      <div key={s.id} className="flex items-center gap-3 group">
-                        <button onClick={() => onToggle(s.id)}
-                          className="flex items-center gap-3 text-left flex-1 min-w-0">
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${project.checklist[s.id] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-blue-400"}`}>
-                            {project.checklist[s.id] && <span className="text-white text-xs">✓</span>}
-                          </div>
-                          <div className="flex-1 flex items-center gap-2 min-w-0">
-                            <span className={`text-sm transition-all truncate ${project.checklist[s.id] ? "line-through text-slate-400" : "text-slate-700"}`}>
-                              {s.label}
-                            </span>
-                            {s.tag && <Tag color={s.tag === "Vente" ? "vente" : "achat"}>{s.tag}</Tag>}
-                          </div>
-                        </button>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <span className="text-xs text-slate-300">{s.month}</span>
-                          {s.info && (
-                            <button
-                              onClick={() => setInfoStep(s)}
-                              className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-all flex-shrink-0"
-                              style={{ background: "#e0f2fe", color: "#0369a1" }}
-                              title="Plus d'infos">
-                              i
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+        {/* Tabs */}
+        <div className="bg-white rounded-2xl shadow-lg p-1.5 flex gap-1" style={{ border: "0.5px solid #e5e3df" }}>
+          {DASHBOARD_TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`flex-1 flex items-center justify-center gap-1 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all ${tab === t.id ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:bg-slate-50"}`}>
+              <span>{t.icon}</span> <span>{t.label}</span>
+            </button>
+          ))}
         </div>
+
+        {tab === "accueil" && (
+          <>
+            {/* Prochaine action */}
+            <Card>
+              <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <span>🎯</span> Prochaine action
+              </h3>
+              {nextStep ? (
+                <div className="flex items-start gap-3">
+                  <button onClick={() => toggleStep(nextStep.id)}
+                    className="w-6 h-6 rounded-full border-2 border-slate-200 hover:border-blue-400 flex-shrink-0 mt-0.5 transition-all" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                        style={{ background: IMPORTANCE[nextStep.importance]?.bg, color: IMPORTANCE[nextStep.importance]?.color }}>
+                        {IMPORTANCE[nextStep.importance]?.label}
+                      </span>
+                      <span className="text-xs text-slate-400">{nextStep.phase} · {nextStep.month}</span>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800">{nextStep.label}</div>
+                  </div>
+                  {nextStep.info && (
+                    <button
+                      onClick={() => setInfoStep(nextStep)}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                      style={{ background: "#e0f2fe", color: "#0369a1" }}
+                      title="Plus d'infos">
+                      i
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm text-green-700">🎉 Toutes les étapes sont complétées !</div>
+              )}
+            </Card>
+
+            {/* Étapes */}
+            <div>
+              <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 px-1">
+                <span>📋</span> Étapes
+              </h3>
+              <div className="flex flex-col gap-4">
+                {Object.entries(phases).map(([phase, items]) => {
+                  const phaseDone = items.filter(s => project.checklist[s.id]).length;
+                  const phaseColor = getPhaseColor(phase);
+                  return (
+                    <Card key={phase}>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ background: phaseColor }} />
+                          <span className="font-bold text-slate-700 text-sm">{phase}</span>
+                        </div>
+                        <span className="text-xs text-slate-400">{phaseDone}/{items.length}</span>
+                      </div>
+                      <ProgressBar value={phaseDone} max={items.length} color={phaseColor} />
+                      <div className="flex flex-col gap-2 mt-3">
+                        {items.map(s => (
+                          <div key={s.id} className="flex items-center gap-3 group">
+                            <button onClick={() => toggleStep(s.id)}
+                              className="flex items-center gap-3 text-left flex-1 min-w-0">
+                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${project.checklist[s.id] ? "border-green-500 bg-green-500" : "border-slate-200 group-hover:border-blue-400"}`}>
+                                {project.checklist[s.id] && <span className="text-white text-xs">✓</span>}
+                              </div>
+                              <div className="flex-1 flex items-center gap-2 min-w-0">
+                                <span className={`text-sm transition-all truncate ${project.checklist[s.id] ? "line-through text-slate-400" : "text-slate-700"}`}>
+                                  {s.label}
+                                </span>
+                                {s.tag && <Tag color={s.tag === "Vente" ? "vente" : "achat"}>{s.tag}</Tag>}
+                              </div>
+                            </button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <span className="text-xs text-slate-300">{s.month}</span>
+                              {s.info && (
+                                <button
+                                  onClick={() => setInfoStep(s)}
+                                  className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-all flex-shrink-0"
+                                  style={{ background: "#e0f2fe", color: "#0369a1" }}
+                                  title="Plus d'infos">
+                                  i
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+
+        {tab === "budget" && <BudgetTab project={project} onUpdate={onUpdate} />}
+        {tab === "contacts" && <ContactsTab project={project} onAdd={addContact} onDelete={deleteContact} />}
+        {tab === "journal" && <JournalTab project={project} onAdd={addJournalEntry} />}
       </div>
     </div>
   );
@@ -1046,6 +1385,9 @@ export default function App() {
       createdAt: new Date().toISOString(),
       startDate,
       checklist: {},
+      budget: {},
+      contacts: [],
+      journal: [],
     };
     const next = [...projects, project];
     setProjects(next);
@@ -1060,15 +1402,13 @@ export default function App() {
     setScreen("dashboard");
   };
 
-  const toggleStep = (stepId) => {
+  const updateActiveProject = useCallback((updater) => {
     setProjects(prev => {
-      const next = prev.map(p => p.id === activeId
-        ? { ...p, checklist: { ...p.checklist, [stepId]: !p.checklist[stepId] } }
-        : p);
+      const next = prev.map(p => p.id === activeId ? updater(p) : p);
       persist(next, activeId);
       return next;
     });
-  };
+  }, [activeId, persist]);
 
   const activeProject = projects.find(p => p.id === activeId);
 
@@ -1087,7 +1427,7 @@ export default function App() {
   } else if (screen === "new-details") {
     content = <NewProjectDetailsScreen type={draftType} onCreate={createProject} onBack={() => setScreen("new-type")} />;
   } else if (screen === "dashboard" && activeProject) {
-    content = <Dashboard project={activeProject} onToggle={toggleStep} onBack={openProjectsList} />;
+    content = <Dashboard project={activeProject} onUpdate={updateActiveProject} onBack={openProjectsList} />;
   } else {
     content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} />;
   }
