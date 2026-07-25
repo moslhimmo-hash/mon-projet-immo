@@ -80,6 +80,153 @@ const POTENTIEL_OPTIONS = [
 ];
 const POTENTIEL_RANK = { faible: 1, moyen: 2, fort: 3 };
 
+// ─── TROUVER UN PROFESSIONNEL ───────────────────────────────────────────────────
+const PRO_TYPES = {
+  courtier: {
+    label: "Courtier",
+    icon: "💰",
+    searchTerm: "courtier immobilier",
+    links: [
+      { name: "CAFPI", url: "https://www.cafpi.fr" },
+      { name: "Meilleurtaux", url: "https://www.meilleurtaux.com" },
+      { name: "Pretto", url: "https://www.pretto.fr" },
+      { name: "Vousfinancer", url: "https://www.vousfinancer.com" },
+    ],
+  },
+  notaire: {
+    label: "Notaire",
+    icon: "⚖️",
+    searchTerm: "notaire",
+    links: [
+      { name: "Notaires.fr — annuaire officiel", url: "https://www.notaires.fr" },
+    ],
+  },
+  diagnostiqueur: {
+    label: "Diagnostiqueur",
+    icon: "🔬",
+    searchTerm: "diagnostiqueur immobilier",
+    links: [
+      { name: "diagnostiqueurs.gouv.fr", url: "https://www.diagnostiqueurs.gouv.fr" },
+    ],
+  },
+  agent: {
+    label: "Agent immobilier",
+    icon: "🏠",
+    searchTerm: "agence immobilière",
+    links: [
+      { name: "SeLoger", url: "https://www.seloger.com" },
+      { name: "PAP", url: "https://www.pap.fr" },
+      { name: "LeBonCoin", url: "https://www.leboncoin.fr" },
+    ],
+  },
+  artisan: {
+    label: "Artisan / entrepreneur",
+    icon: "🔨",
+    searchTerm: "artisan bâtiment",
+    links: [
+      { name: "Habitissimo", url: "https://www.habitissimo.fr" },
+      { name: "Mon Artisan", url: "https://www.monartisan.fr" },
+      { name: "Houzz", url: "https://www.houzz.fr" },
+    ],
+  },
+  architecte: {
+    label: "Architecte",
+    icon: "📐",
+    searchTerm: "architecte",
+    links: [
+      { name: "Ordre des architectes", url: "https://www.architectes.org" },
+    ],
+  },
+  comptable: {
+    label: "Expert-comptable",
+    icon: "🧮",
+    searchTerm: "expert-comptable",
+    links: [
+      { name: "Ordre des experts-comptables", url: "https://www.experts-comptables.fr" },
+    ],
+  },
+  assureur: {
+    label: "Assureur",
+    icon: "🛡️",
+    searchTerm: "assurance",
+    links: [
+      { name: "April", url: "https://www.april.fr" },
+      { name: "Cardif", url: "https://www.cardif.fr" },
+      { name: "LeLynx — comparateur", url: "https://www.lelynx.fr" },
+    ],
+  },
+  gestionnaire: {
+    label: "Gestionnaire locatif",
+    icon: "🔑",
+    searchTerm: "agence de gestion locative",
+    links: [
+      { name: "Foncia", url: "https://www.foncia.com" },
+      { name: "Nexity", url: "https://www.nexity.fr" },
+    ],
+  },
+};
+
+// Ouvre Google Maps centré sur la position de l'utilisateur (si autorisée) avec une recherche pré-remplie,
+// sinon une recherche générique "près de moi" sans coordonnées.
+function openNearMeSearch(searchTerm) {
+  const openMaps = (lat, lng) => {
+    const url = lat != null && lng != null
+      ? `https://www.google.com/maps/search/${encodeURIComponent(searchTerm)}/@${lat},${lng},14z`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(searchTerm + " près de moi")}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  if (typeof navigator !== "undefined" && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => openMaps(pos.coords.latitude, pos.coords.longitude),
+      () => openMaps(null, null),
+      { timeout: 8000 }
+    );
+  } else {
+    openMaps(null, null);
+  }
+}
+
+// Repli par phase, propre à chaque type de projet (les steps sont préfixés par leur type dans leur id).
+const PHASE_PRO_MAP = {
+  "achat-rp": { "Recherche": "agent", "Prêt": "courtier", "Notaire": "notaire", "Travaux (optionnel)": "artisan" },
+  "investissement-locatif": { "Recherche": "agent", "Prêt": "courtier", "Notaire": "notaire", "Travaux (optionnel)": "artisan" },
+  "vente": { "Mise en vente": "agent", "Compromis": "notaire" },
+  "construction": { "Architecte": "architecte", "Permis": "architecte", "Financement": "courtier", "Chantier": "artisan", "Réception": "artisan" },
+  "travaux": { "Devis": "artisan", "Chantier": "artisan", "Financement": "courtier" },
+  "renovation-energetique": { "Devis": "artisan", "Chantier": "artisan", "Financement": "courtier" },
+  "sci": { "Stratégie": "comptable", "Constitution": "comptable", "Gestion": "comptable" },
+  "lmnp": { "Stratégie": "comptable", "Constitution": "comptable", "Gestion": "comptable" },
+  "mise-en-location": { "Recherche locataire": "gestionnaire", "Bail": "gestionnaire", "Gestion": "gestionnaire" },
+};
+
+// Déduit le professionnel pertinent pour une étape : mots-clés fiables d'abord, puis phase/type, puis mots-clés plus larges.
+function detectProType(s) {
+  // Volontairement limité au libellé + aux contacts (pas au corps du texte, qui mentionne souvent
+  // "frais de notaire" ou "assurance emprunteur" comme simple ligne budgétaire sans rapport avec l'étape).
+  const text = [s.label, ...(s.info?.contacts || [])].join(" ").toLowerCase();
+
+  // Tier 1 : signaux très spécifiques et fiables, prioritaires sur la phase.
+  if (/diagnostiqueur|diagnostic/.test(text)) return "diagnostiqueur";
+  if (/assur/.test(text)) return "assureur";
+  if (/notaire|acte authentique|acte de vente|acte d.achat/.test(text)) return "notaire";
+
+  // Tier 2 : repli par phase, propre à chaque type de projet (id préfixé par le type).
+  const typeId = Object.keys(PHASE_PRO_MAP).find(t => s.id.startsWith(`${t}-`));
+  const byPhase = typeId && PHASE_PRO_MAP[typeId][s.phase];
+  if (byPhase) return byPhase;
+
+  // Tier 3 : mots-clés plus larges.
+  if (/courtier|cafpi|meilleurtaux|pretto|vousfinancer|crédit|emprunt|taeg|accord de principe|offre de prêt/.test(text)) return "courtier";
+  if (/comptable|fiscal|amortissement|\bbic\b|kbis|statuts|immatricul|greffe/.test(text)) return "comptable";
+  if (/locataire|bail\b|dossierfacile|\bgli\b|visale|gestion locative/.test(text)) return "gestionnaire";
+  if (/architecte|ccmi|permis de construire/.test(text)) return "architecte";
+  if (/artisan|devis|\brge\b|maprimerenov|habitissimo|houzz/.test(text)) return "artisan";
+  if (/agence immobilière|agent immobilier|seloger|leboncoin|pap\.fr/.test(text)) return "agent";
+
+  return null;
+}
+
 // ─── STEP DATA ────────────────────────────────────────────────────────────────
 function step(phase, label, month, importance, info) {
   return { phase, label, month, importance, info };
@@ -929,6 +1076,59 @@ function InfoModal({ step, onClose }) {
   );
 }
 
+function ProModal({ step, proType, onClose }) {
+  if (!proType) return null;
+  const pro = PRO_TYPES[proType];
+  if (!pro) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+        style={{ maxHeight: "80vh", overflowY: "auto" }}>
+        <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">🔍 Trouver un professionnel</div>
+            <h3 className="font-bold text-slate-800 text-base leading-snug">{pro.icon} {pro.label}</h3>
+            {step?.label && <p className="text-xs text-slate-400 mt-1">Pour l'étape : {step.label}</p>}
+          </div>
+          <button onClick={onClose}
+            className="flex-shrink-0 w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all text-sm">
+            ✕
+          </button>
+        </div>
+        <div className="px-5 pt-4">
+          <button onClick={() => openNearMeSearch(pro.searchTerm)}
+            className="w-full py-2.5 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90"
+            style={{ background: "#2563eb" }}>
+            📍 Trouver près de moi
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Liens utiles</div>
+          <div className="flex flex-col gap-2">
+            {pro.links.map((l, i) => (
+              <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
+                className="flex items-center justify-between gap-2 bg-blue-50 rounded-xl px-3 py-2.5 text-sm text-blue-800 hover:bg-blue-100 transition-all">
+                <span>{l.name}</span>
+                <span className="text-blue-400 text-xs">↗</span>
+              </a>
+            ))}
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          <button onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-slate-800 text-white text-sm font-semibold hover:bg-slate-700 transition-all">
+            Fermer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Tag({ children, color }) {
   const colors = {
     vente: "bg-amber-100 text-amber-800",
@@ -1688,6 +1888,7 @@ const BIENS_TAB = { id: "biens", label: "Biens", icon: "🏘️" };
 function Dashboard({ project, onUpdate, onBack }) {
   const [tab, setTab] = useState("accueil");
   const [infoStep, setInfoStep] = useState(null);
+  const [proStep, setProStep] = useState(null);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [tempDate, setTempDate] = useState("");
   const steps = STEPS_BY_TYPE[project.type] || [];
@@ -1748,6 +1949,7 @@ function Dashboard({ project, onUpdate, onBack }) {
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <InfoModal step={infoStep} onClose={() => setInfoStep(null)} />
+      <ProModal step={proStep} proType={proStep ? detectProType(proStep) : null} onClose={() => setProStep(null)} />
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
@@ -1861,6 +2063,7 @@ function Dashboard({ project, onUpdate, onBack }) {
                         {items.map(s => {
                           const deadline = project.deadlines?.[s.id];
                           const deadlineInfo = deadline ? getDeadlineInfo(deadline) : null;
+                          const proType = detectProType(s);
                           return (
                           <div key={s.id} className="flex flex-col gap-1.5">
                           <div className="flex items-center gap-3 group">
@@ -1890,6 +2093,15 @@ function Dashboard({ project, onUpdate, onBack }) {
                                 title="Définir une échéance">
                                 📅
                               </button>
+                              {proType && (
+                                <button
+                                  onClick={() => setProStep(s)}
+                                  className="w-5 h-5 rounded-full flex items-center justify-center text-xs transition-all flex-shrink-0"
+                                  style={{ background: "#ede9fe", color: "#6d28d9" }}
+                                  title="Trouver un professionnel">
+                                  🔍
+                                </button>
+                              )}
                               {s.info && (
                                 <button
                                   onClick={() => setInfoStep(s)}
