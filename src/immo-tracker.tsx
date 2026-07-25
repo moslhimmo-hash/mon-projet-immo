@@ -59,6 +59,27 @@ const JOURNAL_TYPES = {
 
 const JOURNAL_TYPE_OPTIONS = Object.entries(JOURNAL_TYPES).map(([value, v]) => ({ value, label: `${v.icon} ${v.label}` }));
 
+// Le comparateur de biens n'est proposé que pour ces types de projet.
+const BIENS_RESIDENTIEL_TYPES = ["achat-rp", "vente-achat"];
+const BIENS_INVESTISSEUR_TYPES = ["investissement-locatif", "sci", "lmnp"];
+const BIENS_ENABLED_TYPES = [...BIENS_RESIDENTIEL_TYPES, ...BIENS_INVESTISSEUR_TYPES];
+
+const DPE_LETTERS = ["A", "B", "C", "D", "E", "F", "G"];
+
+const DEMANDE_OPTIONS = [
+  { value: "faible", label: "Faible" },
+  { value: "moyenne", label: "Moyenne" },
+  { value: "forte", label: "Forte" },
+];
+const DEMANDE_RANK = { faible: 1, moyenne: 2, forte: 3 };
+
+const POTENTIEL_OPTIONS = [
+  { value: "faible", label: "Faible" },
+  { value: "moyen", label: "Moyen" },
+  { value: "fort", label: "Fort" },
+];
+const POTENTIEL_RANK = { faible: 1, moyen: 2, fort: 3 };
+
 // ─── STEP DATA ────────────────────────────────────────────────────────────────
 function step(phase, label, month, importance, info) {
   return { phase, label, month, importance, info };
@@ -731,6 +752,135 @@ function checkDeadlineNotifications(projects) {
   return { changed, projects: next };
 }
 
+const fmtPct = n => isNaN(n) || !isFinite(n) ? "—" : n.toFixed(2) + " %";
+
+function calcMensualite(capital, duree, taux) {
+  const r = taux / 100 / 12;
+  const n = duree * 12;
+  if (r === 0) return capital / n;
+  return capital * r / (1 - Math.pow(1 + r, -n));
+}
+
+// ─── COMPARATEUR DE BIENS — CALCULS ────────────────────────────────────────────
+function effectivePrice(b) {
+  const v = b.prixNegocie || b.prixAffiche || b.prixAchat;
+  const n = parseFloat(v);
+  return isNaN(n) || !n ? null : n;
+}
+
+function prixM2(b) {
+  const prix = effectivePrice(b);
+  const surface = parseFloat(b.surface) || 0;
+  return prix && surface ? Math.round(prix / surface) : null;
+}
+
+function rendementBrut(b) {
+  const prix = effectivePrice(b);
+  const loyer = parseFloat(b.loyerEstime) || 0;
+  return prix && loyer ? (loyer * 12 / prix) * 100 : null;
+}
+
+function rendementNet(b) {
+  const prix = effectivePrice(b);
+  const loyer = parseFloat(b.loyerEstime) || 0;
+  const charges = parseFloat(b.charges) || 0;
+  return prix ? ((loyer * 12 - charges * 12) / prix) * 100 : null;
+}
+
+// Mensualité de crédit estimée sur 25 ans à 3,5%, financement à 100% du prix (aucun apport saisi dans la fiche).
+function estimatedMensualite(b) {
+  const prix = effectivePrice(b);
+  return prix ? calcMensualite(prix, 25, 3.5) : 0;
+}
+
+function cashflow(b) {
+  if (!effectivePrice(b) && !b.loyerEstime) return null;
+  const loyer = parseFloat(b.loyerEstime) || 0;
+  const charges = parseFloat(b.charges) || 0;
+  return loyer - charges - estimatedMensualite(b);
+}
+
+function dpeRank(letter) {
+  const idx = DPE_LETTERS.indexOf(letter);
+  return idx === -1 ? null : 7 - idx; // A=7 … G=1, plus haut = meilleur
+}
+
+function demandeRank(v) { return DEMANDE_RANK[v] ?? null; }
+function potentielRank(v) { return POTENTIEL_RANK[v] ?? null; }
+
+// Ramène une série de valeurs sur une échelle 0–10 relative au groupe comparé.
+function normalizeScores(values, higherIsBetter) {
+  const valid = values.filter(v => v != null && !isNaN(v));
+  if (valid.length === 0) return values.map(() => null);
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  return values.map(v => {
+    if (v == null || isNaN(v)) return null;
+    if (max === min) return 10;
+    const norm = (v - min) / (max - min);
+    return higherIsBetter ? norm * 10 : (1 - norm) * 10;
+  });
+}
+
+const RESIDENTIEL_SCORE_CRITERIA = [
+  { weight: 0.30, higherIsBetter: true, get: b => parseFloat(b.coupDeCoeur) },
+  { weight: 0.20, higherIsBetter: false, get: prixM2 },
+  { weight: 0.15, higherIsBetter: true, get: b => dpeRank(b.dpe) },
+  { weight: 0.15, higherIsBetter: false, get: b => parseFloat(b.estimationTravaux) },
+  { weight: 0.10, higherIsBetter: false, get: b => parseFloat(b.distanceTransports) },
+  { weight: 0.10, higherIsBetter: false, get: b => parseFloat(b.charges) },
+];
+
+const INVESTISSEUR_SCORE_CRITERIA = [
+  { weight: 0.30, higherIsBetter: true, get: rendementNet },
+  { weight: 0.25, higherIsBetter: true, get: cashflow },
+  { weight: 0.15, higherIsBetter: true, get: b => demandeRank(b.demandeLocative) },
+  { weight: 0.15, higherIsBetter: true, get: b => potentielRank(b.potentielValorisation) },
+  { weight: 0.15, higherIsBetter: false, get: prixM2 },
+];
+
+// Score global /10 = moyenne pondérée des critères clés, normalisés relativement aux biens comparés.
+function computeScores(biens, criteria) {
+  const columns = criteria.map(c => normalizeScores(biens.map(c.get), c.higherIsBetter));
+  return biens.map((_, bi) => {
+    let total = 0, weightSum = 0;
+    criteria.forEach((c, ci) => {
+      const n = columns[ci][bi];
+      if (n != null) { total += n * c.weight; weightSum += c.weight; }
+    });
+    return weightSum > 0 ? total / weightSum : null;
+  });
+}
+
+function residentielRows(biens) {
+  return [
+    { label: "Prix", values: biens.map(effectivePrice), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "Surface", values: biens.map(b => parseFloat(b.surface) || null), higherIsBetter: true, format: v => v != null ? `${v} m²` : "—" },
+    { label: "Prix/m²", values: biens.map(prixM2), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "DPE", values: biens.map(b => dpeRank(b.dpe)), higherIsBetter: true, format: (v, b) => b.dpe || "—" },
+    { label: "Charges mensuelles", values: biens.map(b => parseFloat(b.charges) || null), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "Taxe foncière", values: biens.map(b => parseFloat(b.taxeFonciere) || null), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "Distance transports", values: biens.map(b => parseFloat(b.distanceTransports) || null), higherIsBetter: false, format: v => v != null ? `${v} min` : "—" },
+    { label: "Travaux estimés", values: biens.map(b => parseFloat(b.estimationTravaux) || null), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "Coup de cœur", values: biens.map(b => parseFloat(b.coupDeCoeur) || null), higherIsBetter: true, format: v => v != null ? `${v}/10` : "—" },
+  ];
+}
+
+function investisseurRows(biens) {
+  return [
+    { label: "Prix d'achat", values: biens.map(effectivePrice), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "Surface", values: biens.map(b => parseFloat(b.surface) || null), higherIsBetter: true, format: v => v != null ? `${v} m²` : "—" },
+    { label: "Prix/m²", values: biens.map(prixM2), higherIsBetter: false, format: v => v != null ? fmt(v) : "—" },
+    { label: "DPE", values: biens.map(b => dpeRank(b.dpe)), higherIsBetter: true, format: (v, b) => b.dpe || "—" },
+    { label: "Loyer estimé", values: biens.map(b => parseFloat(b.loyerEstime) || null), higherIsBetter: true, format: v => v != null ? fmt(v) + "/mois" : "—" },
+    { label: "Rendement brut", values: biens.map(rendementBrut), higherIsBetter: true, format: v => v != null ? fmtPct(v) : "—" },
+    { label: "Rendement net", values: biens.map(rendementNet), higherIsBetter: true, format: v => v != null ? fmtPct(v) : "—" },
+    { label: "Cash-flow mensuel", values: biens.map(cashflow), higherIsBetter: true, format: v => v != null ? fmt(v) : "—" },
+    { label: "Demande locative", values: biens.map(b => demandeRank(b.demandeLocative)), higherIsBetter: true, format: (v, b) => DEMANDE_OPTIONS.find(o => o.value === b.demandeLocative)?.label || "—" },
+    { label: "Potentiel valorisation", values: biens.map(b => potentielRank(b.potentielValorisation)), higherIsBetter: true, format: (v, b) => POTENTIEL_OPTIONS.find(o => o.value === b.potentielValorisation)?.label || "—" },
+  ];
+}
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
@@ -1220,12 +1370,320 @@ function JournalTab({ project, onAdd }) {
   );
 }
 
-const DASHBOARD_TABS = [
+function TagListEditor({ label, items, onChange, placeholder }) {
+  const [val, setVal] = useState("");
+  const add = () => {
+    if (!val.trim()) return;
+    onChange([...(items || []), val.trim()]);
+    setVal("");
+  };
+  const remove = (i) => onChange((items || []).filter((_, idx) => idx !== i));
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
+      <div className="flex gap-2">
+        <input
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder={placeholder}
+          className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+        />
+        <button type="button" onClick={add}
+          className="px-3 rounded-xl bg-slate-100 text-slate-600 text-sm font-semibold hover:bg-slate-200 transition-all">
+          +
+        </button>
+      </div>
+      {items?.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-1">
+          {items.map((it, i) => (
+            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full flex items-center gap-1">
+              {it}
+              <button type="button" onClick={() => remove(i)} className="text-slate-400 hover:text-red-500">✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BienForm({ group, initial, onSave, onCancel }) {
+  const [form, setForm] = useState(initial || {});
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const prixLive = group === "investisseur" ? (parseFloat(form.prixAchat) || 0) : (parseFloat(form.prixNegocie) || parseFloat(form.prixAffiche) || 0);
+  const surfaceLive = parseFloat(form.surface) || 0;
+  const prixM2Live = prixLive && surfaceLive ? Math.round(prixLive / surfaceLive) : 0;
+
+  const loyerLive = parseFloat(form.loyerEstime) || 0;
+  const chargesLive = parseFloat(form.charges) || 0;
+  const rendBrutLive = prixLive && loyerLive ? (loyerLive * 12 / prixLive) * 100 : 0;
+  const rendNetLive = prixLive ? ((loyerLive * 12 - chargesLive * 12) / prixLive) * 100 : 0;
+  const mensualiteLive = prixLive ? calcMensualite(prixLive, 25, 3.5) : 0;
+  const cashflowLive = loyerLive - chargesLive - mensualiteLive;
+
+  const submit = () => {
+    if (!form.adresse?.trim()) return;
+    onSave({ id: form.id || uid(), ...form });
+  };
+
+  return (
+    <Card>
+      <div className="flex flex-col gap-4">
+        <Input label="Adresse" value={form.adresse || ""} onChange={v => set("adresse", v)} placeholder="12 rue de la Paix, Paris" />
+
+        {group === "residentiel" ? (
+          <>
+            <Input label="Prix affiché" value={form.prixAffiche || ""} onChange={v => set("prixAffiche", v)} type="number" suffix="€" />
+            <Input label="Prix négocié" value={form.prixNegocie || ""} onChange={v => set("prixNegocie", v)} type="number" suffix="€" placeholder="Optionnel" />
+            <Input label="Surface" value={form.surface || ""} onChange={v => set("surface", v)} type="number" suffix="m²" />
+            <Stat label="Prix au m² (calculé)" value={prixM2Live ? fmt(prixM2Live) : "—"} />
+            <Select label="Type" value={form.typeBien || "appartement"} onChange={v => set("typeBien", v)}
+              options={[{ value: "appartement", label: "Appartement" }, { value: "maison", label: "Maison" }]} />
+            <Input label="Étage" value={form.etage || ""} onChange={v => set("etage", v)} placeholder="Ex : 3e étage" />
+            <Input label="Année de construction" value={form.anneeConstruction || ""} onChange={v => set("anneeConstruction", v)} type="number" placeholder="1990" />
+            <Select label="DPE" value={form.dpe || "D"} onChange={v => set("dpe", v)} options={DPE_LETTERS.map(l => ({ value: l, label: l }))} />
+            <Input label="Charges mensuelles" value={form.charges || ""} onChange={v => set("charges", v)} type="number" suffix="€" />
+            <Input label="Taxe foncière annuelle" value={form.taxeFonciere || ""} onChange={v => set("taxeFonciere", v)} type="number" suffix="€" />
+            <Input label="Distance transports (à pied)" value={form.distanceTransports || ""} onChange={v => set("distanceTransports", v)} type="number" suffix="min" />
+            <Input label="Commerces / écoles à proximité" value={form.commercesEcoles || ""} onChange={v => set("commercesEcoles", v)} placeholder="Optionnel" />
+            <Input label="Estimation travaux" value={form.estimationTravaux || ""} onChange={v => set("estimationTravaux", v)} type="number" suffix="€" />
+            <TagListEditor label="Points positifs" items={form.pointsPositifs} onChange={v => set("pointsPositifs", v)} placeholder="Ex : lumineux, calme…" />
+            <TagListEditor label="Points négatifs" items={form.pointsNegatifs} onChange={v => set("pointsNegatifs", v)} placeholder="Ex : travaux à prévoir…" />
+            <Input label="Coup de cœur" value={form.coupDeCoeur || ""} onChange={v => set("coupDeCoeur", v)} type="number" suffix="/10" placeholder="0 à 10" />
+          </>
+        ) : (
+          <>
+            <Input label="Prix d'achat" value={form.prixAchat || ""} onChange={v => set("prixAchat", v)} type="number" suffix="€" />
+            <Input label="Surface" value={form.surface || ""} onChange={v => set("surface", v)} type="number" suffix="m²" />
+            <Stat label="Prix au m² (calculé)" value={prixM2Live ? fmt(prixM2Live) : "—"} />
+            <Select label="DPE" value={form.dpe || "D"} onChange={v => set("dpe", v)} options={DPE_LETTERS.map(l => ({ value: l, label: l }))} />
+            <Input label="Charges mensuelles" value={form.charges || ""} onChange={v => set("charges", v)} type="number" suffix="€" />
+            <Input label="Taxe foncière annuelle" value={form.taxeFonciere || ""} onChange={v => set("taxeFonciere", v)} type="number" suffix="€" />
+            <Input label="Loyer estimé" value={form.loyerEstime || ""} onChange={v => set("loyerEstime", v)} type="number" suffix="€/mois" />
+            <Stat label="Rendement brut (calculé)" value={fmtPct(rendBrutLive)} accent="text-blue-600" />
+            <Stat label="Rendement net (calculé)" value={fmtPct(rendNetLive)} accent={rendNetLive >= 4 ? "text-green-600" : "text-amber-600"} />
+            <Stat label="Cash-flow mensuel estimé (calculé)" value={fmt(cashflowLive)} accent={cashflowLive >= 0 ? "text-green-600" : "text-red-500"}
+              sub="mensualité crédit estimée sur 25 ans à 3,5%, sans apport" />
+            <Select label="Demande locative" value={form.demandeLocative || "moyenne"} onChange={v => set("demandeLocative", v)} options={DEMANDE_OPTIONS} />
+            <Select label="Potentiel de valorisation" value={form.potentielValorisation || "moyen"} onChange={v => set("potentielValorisation", v)} options={POTENTIEL_OPTIONS} />
+          </>
+        )}
+
+        <Input label="Note personnelle" value={form.notePersonnelle || ""} onChange={v => set("notePersonnelle", v)} placeholder="Optionnel" />
+
+        <div className="flex gap-3">
+          <button onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-all">
+            Annuler
+          </button>
+          <button onClick={submit}
+            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function BienCard({ bien, group, onEdit, onDelete, selectable, selected, onToggleSelect }) {
+  const prix = effectivePrice(bien);
+  const surface = parseFloat(bien.surface) || null;
+  const rendNet = rendementNet(bien);
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          {selectable && (
+            <input type="checkbox" checked={selected} onChange={onToggleSelect} className="mt-1 flex-shrink-0" />
+          )}
+          <div className="min-w-0">
+            <div className="font-bold text-slate-800 text-sm truncate">{bien.adresse || "Sans adresse"}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-slate-500">
+              {prix != null && <span>{fmt(prix)}</span>}
+              {surface != null && <span>{surface} m²</span>}
+              {group === "residentiel"
+                ? (bien.coupDeCoeur !== undefined && bien.coupDeCoeur !== "" && <span>❤️ {bien.coupDeCoeur}/10</span>)
+                : (rendNet != null && <span>📈 {fmtPct(rendNet)} net</span>)}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-1 flex-shrink-0">
+          <button onClick={() => onEdit(bien)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-xs bg-slate-100 text-slate-500 hover:bg-slate-200 transition-all">
+            ✎
+          </button>
+          <button onClick={() => onDelete(bien.id)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-xs bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-500 transition-all">
+            ✕
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ComparatorTable({ biens, group, onBack }) {
+  const criteria = group === "investisseur" ? INVESTISSEUR_SCORE_CRITERIA : RESIDENTIEL_SCORE_CRITERIA;
+  const scores = computeScores(biens, criteria);
+  const rows = group === "investisseur" ? investisseurRows(biens) : residentielRows(biens);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <button onClick={onBack} className="text-sm text-blue-600 font-semibold self-start hover:underline">← Retour à la liste</button>
+      <Card className="overflow-x-auto">
+        <table className="text-sm border-separate" style={{ borderSpacing: "0 4px", minWidth: "100%" }}>
+          <thead>
+            <tr>
+              <th className="text-left text-xs text-slate-400 font-semibold p-2"></th>
+              {biens.map(b => (
+                <th key={b.id} className="text-left p-2 align-bottom" style={{ minWidth: 140 }}>
+                  <div className="font-bold text-slate-800 text-sm truncate">{b.adresse || "Sans adresse"}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => {
+              const nums = row.values.map(v => (typeof v === "number" && !isNaN(v) ? v : null));
+              const valid = nums.filter(v => v != null);
+              const best = valid.length ? (row.higherIsBetter ? Math.max(...valid) : Math.min(...valid)) : null;
+              const worst = valid.length ? (row.higherIsBetter ? Math.min(...valid) : Math.max(...valid)) : null;
+              return (
+                <tr key={row.label}>
+                  <td className="text-xs font-semibold text-slate-500 p-2 whitespace-nowrap">{row.label}</td>
+                  {row.values.map((v, i) => {
+                    const num = nums[i];
+                    let bg = "transparent", color = "#334155";
+                    if (num != null && valid.length > 1 && best !== worst) {
+                      if (num === best) { bg = "#d1fae5"; color = "#047857"; }
+                      else if (num === worst) { bg = "#fee2e2"; color = "#b91c1c"; }
+                    }
+                    return (
+                      <td key={i} className="p-2 rounded-lg font-semibold" style={{ background: bg, color }}>
+                        {row.format(v, biens[i])}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            <tr>
+              <td className="text-xs font-bold text-slate-700 p-2">Score global</td>
+              {scores.map((s, i) => (
+                <td key={i} className="p-2 font-bold rounded-lg" style={{ background: "#dbeafe", color: "#1d4ed8" }}>
+                  {s != null ? `${s.toFixed(1)}/10` : "—"}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function BiensTab({ project, onUpdate }) {
+  const group = BIENS_INVESTISSEUR_TYPES.includes(project.type) ? "investisseur" : "residentiel";
+  const biens = project.biens || [];
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingBien, setEditingBien] = useState(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [view, setView] = useState("list");
+
+  const saveBien = (bien) => {
+    onUpdate(p => {
+      const already = (p.biens || []).some(b => b.id === bien.id);
+      const nextBiens = already ? p.biens.map(b => (b.id === bien.id ? bien : b)) : [...(p.biens || []), bien];
+      return { ...p, biens: nextBiens };
+    });
+    setFormOpen(false);
+    setEditingBien(null);
+  };
+
+  const deleteBien = (id) => {
+    onUpdate(p => ({ ...p, biens: (p.biens || []).filter(b => b.id !== id) }));
+    setSelectedIds(ids => ids.filter(i => i !== id));
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds(ids => {
+      if (ids.includes(id)) return ids.filter(i => i !== id);
+      if (ids.length >= 4) return ids;
+      return [...ids, id];
+    });
+  };
+
+  if (view === "compare") {
+    const selectedBiens = biens.filter(b => selectedIds.includes(b.id));
+    return <ComparatorTable biens={selectedBiens} group={group} onBack={() => setView("list")} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {!formOpen && (
+        <div className="flex gap-3">
+          <button onClick={() => { setEditingBien(null); setFormOpen(true); }}
+            className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+            + Ajouter un bien
+          </button>
+          {biens.length >= 2 && (
+            <button onClick={() => setCompareMode(m => !m)}
+              className={`px-4 py-3 rounded-xl text-sm font-bold transition-all ${compareMode ? "bg-slate-800 text-white" : "border border-slate-200 text-slate-600"}`}>
+              Comparer
+            </button>
+          )}
+        </div>
+      )}
+
+      {formOpen && (
+        <BienForm group={group} initial={editingBien}
+          onSave={saveBien}
+          onCancel={() => { setFormOpen(false); setEditingBien(null); }} />
+      )}
+
+      {compareMode && !formOpen && (
+        <div className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-2.5 text-sm text-blue-700">
+          <span>{selectedIds.length}/4 sélectionné{selectedIds.length > 1 ? "s" : ""}</span>
+          <button
+            disabled={selectedIds.length < 2}
+            onClick={() => setView("compare")}
+            className={`font-bold ${selectedIds.length < 2 ? "text-blue-300 cursor-not-allowed" : "text-blue-700 hover:underline"}`}>
+            Voir la comparaison →
+          </button>
+        </div>
+      )}
+
+      {!formOpen && (
+        biens.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-4">Aucun bien enregistré pour ce projet pour l'instant.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {biens.map(b => (
+              <BienCard key={b.id} bien={b} group={group}
+                onEdit={(bien) => { setEditingBien(bien); setFormOpen(true); }}
+                onDelete={deleteBien}
+                selectable={compareMode}
+                selected={selectedIds.includes(b.id)}
+                onToggleSelect={() => toggleSelect(b.id)} />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+const DASHBOARD_TABS_BASE = [
   { id: "accueil", label: "Accueil", icon: "🏠" },
   { id: "budget", label: "Budget", icon: "💶" },
   { id: "contacts", label: "Contacts", icon: "📇" },
   { id: "journal", label: "Journal", icon: "📓" },
 ];
+const BIENS_TAB = { id: "biens", label: "Biens", icon: "🏘️" };
 
 function Dashboard({ project, onUpdate, onBack }) {
   const [tab, setTab] = useState("accueil");
@@ -1237,6 +1695,9 @@ function Dashboard({ project, onUpdate, onBack }) {
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
   const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
   const nextStep = steps.find(s => !project.checklist[s.id]);
+  const tabs = BIENS_ENABLED_TYPES.includes(project.type)
+    ? [DASHBOARD_TABS_BASE[0], BIENS_TAB, ...DASHBOARD_TABS_BASE.slice(1)]
+    : DASHBOARD_TABS_BASE;
 
   const phases = {};
   steps.forEach(s => {
@@ -1311,7 +1772,7 @@ function Dashboard({ project, onUpdate, onBack }) {
       <div className="max-w-2xl mx-auto px-5 -mt-8 pb-10 flex flex-col gap-4">
         {/* Tabs */}
         <div className="bg-white rounded-2xl shadow-lg p-1.5 flex gap-1" style={{ border: "0.5px solid #e5e3df" }}>
-          {DASHBOARD_TABS.map(t => (
+          {tabs.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex-1 flex items-center justify-center gap-1 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all ${tab === t.id ? "bg-blue-600 text-white shadow" : "text-slate-500 hover:bg-slate-50"}`}>
               <span>{t.icon}</span> <span>{t.label}</span>
@@ -1479,6 +1940,7 @@ function Dashboard({ project, onUpdate, onBack }) {
         {tab === "budget" && <BudgetTab project={project} onUpdate={onUpdate} />}
         {tab === "contacts" && <ContactsTab project={project} onAdd={addContact} onDelete={deleteContact} />}
         {tab === "journal" && <JournalTab project={project} onAdd={addJournalEntry} />}
+        {tab === "biens" && <BiensTab project={project} onUpdate={onUpdate} />}
       </div>
     </div>
   );
@@ -1539,6 +2001,7 @@ export default function App() {
       journal: [],
       deadlines: {},
       notifiedDeadlines: {},
+      biens: [],
     };
     const next = [...projects, project];
     setProjects(next);
