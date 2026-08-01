@@ -1211,6 +1211,10 @@ async function generateProjectPDF(project) {
     });
   };
 
+  // toLocaleString("fr-FR") sépare les milliers avec une espace insécable/fine (U+00A0, U+202F)
+  // que la police Helvetica de jsPDF ne sait pas afficher — on la remplace par une espace normale.
+  const pdfAmount = (n) => fmt(n).replace(/[  ]/g, " ");
+
   // ── En-tête ──
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
@@ -1246,7 +1250,7 @@ async function generateProjectPDF(project) {
       const checked = !!project.checklist[s.id];
       const deadline = project.deadlines?.[s.id];
       const deadlineText = deadline ? ` — échéance : ${fmtDate(deadline)}` : "";
-      line(`${checked ? "✓" : "○"} ${s.label}${deadlineText}`, { indent: 4, color: checked ? [16, 185, 129] : [71, 85, 105] });
+      line(`${checked ? "[x]" : "[ ]"} ${s.label}${deadlineText}`, { indent: 4, color: checked ? [16, 185, 129] : [71, 85, 105] });
     });
     y += 2;
   });
@@ -1272,11 +1276,11 @@ async function generateProjectPDF(project) {
   if (totalEngage === 0 && budgetGlobal === 0) {
     line("Aucune information budgétaire renseignée.", { color: [148, 163, 184] });
   } else {
-    if (budgetGlobal > 0) line(`Budget global disponible : ${fmt(budgetGlobal)}`, { bold: true, gap: 6 });
-    postes.filter(([, v]) => v > 0).forEach(([label, v]) => line(`${label} : ${fmt(v)}`, { indent: 4 }));
+    if (budgetGlobal > 0) line(`Budget global disponible : ${pdfAmount(budgetGlobal)}`, { bold: true, gap: 6 });
+    postes.filter(([, v]) => v > 0).forEach(([label, v]) => line(`${label} : ${pdfAmount(v)}`, { indent: 4 }));
     y += 1;
-    line(`Total engagé : ${fmt(totalEngage)}`, { bold: true, size: 11 });
-    if (budgetGlobal > 0) line(`Reste disponible : ${fmt(budgetGlobal - totalEngage)}`, { bold: true, size: 11, color: budgetGlobal - totalEngage >= 0 ? [4, 120, 87] : [185, 28, 28] });
+    line(`Total engagé : ${pdfAmount(totalEngage)}`, { bold: true, size: 11 });
+    if (budgetGlobal > 0) line(`Reste disponible : ${pdfAmount(budgetGlobal - totalEngage)}`, { bold: true, size: 11, color: budgetGlobal - totalEngage >= 0 ? [4, 120, 87] : [185, 28, 28] });
   }
 
   // ── Contacts ──
