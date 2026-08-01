@@ -14,6 +14,20 @@ async function saveData(data) {
   try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
 
+// Clé API Anthropic de l'utilisateur — stockée uniquement en local, jamais dans le code ni le repo.
+const AI_KEY_STORAGE = "cozimo-ai-key";
+
+async function loadApiKey() {
+  try {
+    const r = await window.storage.get(AI_KEY_STORAGE);
+    return r?.value || null;
+  } catch { return null; }
+}
+
+async function saveApiKey(key) {
+  try { await window.storage.set(AI_KEY_STORAGE, key); } catch {}
+}
+
 function uid() {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -79,6 +93,55 @@ const POTENTIEL_OPTIONS = [
   { value: "fort", label: "Fort" },
 ];
 const POTENTIEL_RANK = { faible: 1, moyen: 2, fort: 3 };
+
+// ─── ASSISTANT IA ───────────────────────────────────────────────────────────────
+const AI_MODEL = "claude-sonnet-5";
+
+const AI_SUGGESTIONS = {
+  achat: [
+    "Pourquoi la banque me demande ce document ?",
+    "Comment négocier le prix ?",
+    "Quels sont mes recours si le vendeur se rétracte ?",
+  ],
+  investissement: [
+    "Comment calculer mon cash-flow ?",
+    "LMNP ou SCI, que choisir ?",
+    "Comment optimiser ma fiscalité ?",
+  ],
+  vente: [
+    "Comment fixer le bon prix ?",
+    "Faut-il accepter cette offre ?",
+    "Que faire si l'acheteur se rétracte ?",
+  ],
+  travaux: [
+    "Comment choisir un artisan ?",
+    "Quelles garanties exiger ?",
+    "Comment gérer un chantier ?",
+  ],
+  location: [
+    "Comment fixer le bon loyer ?",
+    "Quels documents demander à un locataire ?",
+    "Que faire en cas de loyer impayé ?",
+  ],
+};
+
+const AI_SUGGESTION_CATEGORY_BY_TYPE = {
+  "achat-rp": "achat",
+  "investissement-locatif": "investissement",
+  "sci": "investissement",
+  "lmnp": "investissement",
+  "vente": "vente",
+  "travaux": "travaux",
+  "renovation-energetique": "travaux",
+  "construction": "travaux",
+  "location": "location",
+  "mise-en-location": "location",
+};
+
+function getAISuggestions(type) {
+  if (type === "vente-achat") return [...AI_SUGGESTIONS.vente, ...AI_SUGGESTIONS.achat];
+  return AI_SUGGESTIONS[AI_SUGGESTION_CATEGORY_BY_TYPE[type]] || AI_SUGGESTIONS.achat;
+}
 
 // ─── TROUVER UN PROFESSIONNEL ───────────────────────────────────────────────────
 const PRO_TYPES = {
@@ -1028,6 +1091,61 @@ function investisseurRows(biens) {
   ];
 }
 
+function buildAISystemPrompt(project) {
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const done = steps.filter(s => project.checklist[s.id]).length;
+  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const typeLabel = PROJECT_TYPES.find(t => t.id === project.type)?.label || project.type;
+  const nextStep = steps.find(s => !project.checklist[s.id]);
+
+  const b = project.budget || {};
+  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
+  const prixAchat = parseFloat(b.prixAchat) || 0;
+  let budgetLine = "non renseigné";
+  if (budgetGlobal > 0) budgetLine = `${fmt(budgetGlobal)} de budget global`;
+  else if (prixAchat > 0) budgetLine = `prix d'achat prévu de ${fmt(prixAchat)}`;
+
+  return `Tu es un assistant immobilier expert intégré dans Cozimo.
+L'utilisateur a un projet de type ${typeLabel}.
+Il en est à ${pct}% de son projet (${done}/${steps.length} étapes cochées).
+Sa prochaine étape est : ${nextStep ? nextStep.label : "toutes les étapes sont complétées"}.
+Son budget est : ${budgetLine}.
+Réponds de façon concise, pratique et bienveillante en français.`;
+}
+
+async function callAnthropic(apiKey, systemPrompt, history, question) {
+  const messages = [];
+  history.slice(-5).forEach(h => {
+    messages.push({ role: "user", content: h.question });
+    messages.push({ role: "assistant", content: h.answer });
+  });
+  messages.push({ role: "user", content: question });
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const msg = body?.error?.message || `Erreur API (${res.status})`;
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  return data.content?.[0]?.text || "Pas de réponse.";
+}
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
@@ -1124,6 +1242,145 @@ function ProModal({ step, proType, onClose }) {
             Fermer
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AIModal({ project, apiKey, onSaveKey, history, onAddExchange, onClose }) {
+  const [screen, setScreen] = useState(apiKey ? "chat" : "config");
+  const [keyInput, setKeyInput] = useState("");
+  const [question, setQuestion] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const suggestions = getAISuggestions(project.type);
+
+  const saveKey = () => {
+    const trimmed = keyInput.trim();
+    if (!trimmed.startsWith("sk-ant-")) {
+      setError("La clé doit commencer par sk-ant-…");
+      return;
+    }
+    onSaveKey(trimmed);
+    setKeyInput("");
+    setError("");
+    setScreen("chat");
+  };
+
+  const ask = async (q) => {
+    const text = (q || question).trim();
+    if (!text || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const systemPrompt = buildAISystemPrompt(project);
+      const answer = await callAnthropic(apiKey, systemPrompt, history, text);
+      onAddExchange({ question: text, answer });
+      setQuestion("");
+    } catch (e) {
+      setError(e.message || "Une erreur est survenue.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
+        style={{ maxHeight: "85vh" }}>
+        <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3 flex-shrink-0">
+          <div>
+            <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">✨ Assistant IA</div>
+            <h3 className="font-bold text-slate-800 text-base leading-snug">
+              {screen === "config" ? "Configurer votre clé API" : "Posez votre question"}
+            </h3>
+          </div>
+          <button onClick={onClose}
+            className="flex-shrink-0 w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all text-sm">
+            ✕
+          </button>
+        </div>
+
+        {screen === "config" ? (
+          <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto">
+            <p className="text-sm text-slate-600 leading-relaxed">
+              Pour utiliser l'assistant IA, entrez votre clé API Anthropic (obtenue sur console.anthropic.com).
+            </p>
+            {apiKey && <p className="text-xs text-slate-400">Clé actuelle : sk-ant-••••{apiKey.slice(-4)}</p>}
+            <Input label="Clé API Anthropic" value={keyInput} onChange={setKeyInput} type="password" placeholder="sk-ant-…" />
+            {error && <p className="text-xs text-red-500">{error}</p>}
+            <div className="bg-blue-50 rounded-xl px-3 py-2.5 text-xs text-blue-800">
+              🔒 Votre clé API est stockée localement sur votre appareil et n'est jamais partagée.
+            </div>
+            <div className="flex gap-3">
+              {apiKey && (
+                <button onClick={() => { setError(""); setScreen("chat"); }}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-all">
+                  Annuler
+                </button>
+              )}
+              <button onClick={saveKey}
+                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="px-5 pt-3 flex-shrink-0">
+              <button onClick={() => { setError(""); setScreen("config"); }} className="text-xs text-slate-400 hover:text-blue-600 transition-all">
+                Modifier la clé
+              </button>
+            </div>
+            <div className="px-5 py-3 overflow-y-auto flex-1 flex flex-col gap-3">
+              {history.length === 0 && (
+                <p className="text-sm text-slate-400">Posez une question sur votre projet, ou choisissez une suggestion ci-dessous.</p>
+              )}
+              {history.map((h, i) => (
+                <div key={i} className="flex flex-col gap-1.5">
+                  <div className="self-end max-w-[85%] bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm px-3 py-2" style={{ marginLeft: "auto" }}>
+                    {h.question}
+                  </div>
+                  <div className="max-w-[85%] bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm px-3 py-2 whitespace-pre-wrap">
+                    {h.answer}
+                  </div>
+                </div>
+              ))}
+              {sending && <div className="text-xs text-slate-400">L'assistant réfléchit…</div>}
+              {error && <div className="text-xs text-red-500">{error}</div>}
+            </div>
+
+            {history.length === 0 && suggestions.length > 0 && (
+              <div className="px-5 pb-2 flex flex-wrap gap-2 flex-shrink-0">
+                {suggestions.map((s, i) => (
+                  <button key={i} onClick={() => ask(s)} disabled={sending}
+                    className="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-all disabled:opacity-50">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="px-5 pb-5 pt-2 border-t border-slate-100 flex gap-2 flex-shrink-0">
+              <input
+                value={question}
+                onChange={e => setQuestion(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); ask(); } }}
+                placeholder="Votre question…"
+                disabled={sending}
+                className="flex-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              />
+              <button onClick={() => ask()} disabled={sending || !question.trim()}
+                className="px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50 flex-shrink-0">
+                Envoyer
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1891,6 +2148,22 @@ function Dashboard({ project, onUpdate, onBack }) {
   const [proStep, setProStep] = useState(null);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [tempDate, setTempDate] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
+  const [apiKey, setApiKey] = useState(null);
+  const [aiHistory, setAiHistory] = useState([]);
+
+  useEffect(() => {
+    loadApiKey().then(setApiKey);
+  }, []);
+
+  const saveApiKeyHandler = (key) => {
+    setApiKey(key);
+    saveApiKey(key);
+  };
+  const addAiExchange = (exchange) => {
+    setAiHistory(prev => [...prev, exchange].slice(-5));
+  };
+
   const steps = STEPS_BY_TYPE[project.type] || [];
   const done = steps.filter(s => project.checklist[s.id]).length;
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
@@ -1950,6 +2223,16 @@ function Dashboard({ project, onUpdate, onBack }) {
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <InfoModal step={infoStep} onClose={() => setInfoStep(null)} />
       <ProModal step={proStep} proType={proStep ? detectProType(proStep) : null} onClose={() => setProStep(null)} />
+      {aiOpen && (
+        <AIModal
+          project={project}
+          apiKey={apiKey}
+          onSaveKey={saveApiKeyHandler}
+          history={aiHistory}
+          onAddExchange={addAiExchange}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
@@ -2017,6 +2300,12 @@ function Dashboard({ project, onUpdate, onBack }) {
                 <div className="text-sm text-green-700">🎉 Toutes les étapes sont complétées !</div>
               )}
             </Card>
+
+            <button onClick={() => setAiOpen(true)}
+              className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90"
+              style={{ background: "#2563eb" }}>
+              ✨ Poser une question à l'IA
+            </button>
 
             {/* Échéances proches */}
             {upcomingDeadlines.length > 0 && (
