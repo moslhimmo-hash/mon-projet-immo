@@ -1146,6 +1146,177 @@ async function callAnthropic(apiKey, systemPrompt, history, question) {
   return data.content?.[0]?.text || "Pas de réponse.";
 }
 
+// ─── EXPORT PDF ───────────────────────────────────────────────────────────────
+const JSPDF_CDN_URL = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+let jsPDFLoadPromise = null;
+
+function loadJsPDF() {
+  if (typeof window !== "undefined" && window.jspdf?.jsPDF) return Promise.resolve(window.jspdf.jsPDF);
+  if (jsPDFLoadPromise) return jsPDFLoadPromise;
+  jsPDFLoadPromise = new Promise((resolve, reject) => {
+    if (typeof document === "undefined") { reject(new Error("Export PDF disponible uniquement sur le web.")); return; }
+    const script = document.createElement("script");
+    script.src = JSPDF_CDN_URL;
+    script.onload = () => {
+      if (window.jspdf?.jsPDF) resolve(window.jspdf.jsPDF);
+      else reject(new Error("jsPDF n'a pas pu être initialisé."));
+    };
+    script.onerror = () => reject(new Error("Impossible de charger jsPDF depuis le CDN."));
+    document.head.appendChild(script);
+  });
+  return jsPDFLoadPromise;
+}
+
+function sanitizeFilename(str) {
+  return (str || "projet")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "projet";
+}
+
+async function generateProjectPDF(project) {
+  const JsPDF = await loadJsPDF();
+  const doc = new JsPDF({ unit: "mm", format: "a4" });
+
+  const marginX = 15;
+  const pageWidth = 210;
+  const pageHeight = 297;
+  let y = 20;
+
+  const ensureSpace = (needed) => {
+    if (y + needed > pageHeight - 15) { doc.addPage(); y = 20; }
+  };
+
+  const sectionTitle = (title) => {
+    ensureSpace(14);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(26, 26, 46);
+    doc.text(title, marginX, y);
+    y += 3;
+    doc.setDrawColor(229, 227, 223);
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 7;
+  };
+
+  const line = (text, { bold = false, size = 10, color = [51, 65, 85], indent = 0, gap = 5.5 } = {}) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(size);
+    doc.setTextColor(color[0], color[1], color[2]);
+    const wrapped = doc.splitTextToSize(text, pageWidth - marginX * 2 - indent);
+    wrapped.forEach(l => {
+      ensureSpace(gap + 1);
+      doc.text(l, marginX + indent, y);
+      y += gap;
+    });
+  };
+
+  // ── En-tête ──
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.setTextColor(185, 64, 64);
+  doc.text("Cozimo", marginX, y);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Exporté le ${new Date().toLocaleDateString("fr-FR")}`, pageWidth - marginX, y - 2, { align: "right" });
+  y += 12;
+
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const done = steps.filter(s => project.checklist[s.id]).length;
+  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const typeLabel = PROJECT_TYPES.find(t => t.id === project.type)?.label || project.type;
+
+  line(project.name, { bold: true, size: 16, color: [26, 26, 46], gap: 7 });
+  line(`${typeLabel} — ${pct}% complété (${done}/${steps.length} étapes)`, { size: 11, color: [71, 85, 105], gap: 9 });
+
+  // ── Étapes ──
+  sectionTitle("Étapes");
+  const phases = {};
+  steps.forEach(s => {
+    const key = s.tag ? `${s.tag} — ${s.phase}` : s.phase;
+    if (!phases[key]) phases[key] = [];
+    phases[key].push(s);
+  });
+  Object.entries(phases).forEach(([phase, items]) => {
+    const phaseDone = items.filter(s => project.checklist[s.id]).length;
+    line(`${phase} (${phaseDone}/${items.length})`, { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    items.forEach(s => {
+      const checked = !!project.checklist[s.id];
+      const deadline = project.deadlines?.[s.id];
+      const deadlineText = deadline ? ` — échéance : ${fmtDate(deadline)}` : "";
+      line(`${checked ? "✓" : "○"} ${s.label}${deadlineText}`, { indent: 4, color: checked ? [16, 185, 129] : [71, 85, 105] });
+    });
+    y += 2;
+  });
+
+  // ── Budget ──
+  sectionTitle("Budget");
+  const b = project.budget || {};
+  const prixAchat = parseFloat(b.prixAchat) || 0;
+  const neuf = !!b.neuf;
+  const postes = [
+    ["Prix d'achat", prixAchat],
+    ["Frais de notaire", calcNotaire(prixAchat, neuf)],
+    ["Frais d'agence", parseFloat(b.fraisAgence) || 0],
+    ["Budget travaux", parseFloat(b.budgetTravaux) || 0],
+    ["Mobilier", parseFloat(b.mobilier) || 0],
+    ["Électroménager", parseFloat(b.electromenager) || 0],
+    ["Frais bancaires", parseFloat(b.fraisBancaires) || 0],
+    ["Assurance", parseFloat(b.assurance) || 0],
+    ["Taxe foncière (annuelle)", parseFloat(b.taxeFonciere) || 0],
+  ];
+  const totalEngage = postes.reduce((sum, [, v]) => sum + v, 0);
+  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
+  if (totalEngage === 0 && budgetGlobal === 0) {
+    line("Aucune information budgétaire renseignée.", { color: [148, 163, 184] });
+  } else {
+    if (budgetGlobal > 0) line(`Budget global disponible : ${fmt(budgetGlobal)}`, { bold: true, gap: 6 });
+    postes.filter(([, v]) => v > 0).forEach(([label, v]) => line(`${label} : ${fmt(v)}`, { indent: 4 }));
+    y += 1;
+    line(`Total engagé : ${fmt(totalEngage)}`, { bold: true, size: 11 });
+    if (budgetGlobal > 0) line(`Reste disponible : ${fmt(budgetGlobal - totalEngage)}`, { bold: true, size: 11, color: budgetGlobal - totalEngage >= 0 ? [4, 120, 87] : [185, 28, 28] });
+  }
+
+  // ── Contacts ──
+  sectionTitle("Contacts");
+  const contacts = project.contacts || [];
+  if (contacts.length === 0) {
+    line("Aucun contact enregistré.", { color: [148, 163, 184] });
+  } else {
+    contacts.forEach(c => {
+      const roleLabel = CONTACT_ROLES.find(r => r.value === c.role)?.label || "Autre";
+      line(`${c.nom || "Sans nom"} — ${roleLabel}`, { bold: true, gap: 6 });
+      if (c.telephone) line(`Tél. : ${c.telephone}`, { indent: 4 });
+      if (c.email) line(`Email : ${c.email}`, { indent: 4 });
+      if (c.notes) line(`Notes : ${c.notes}`, { indent: 4, color: [100, 116, 139] });
+      y += 2;
+    });
+  }
+
+  // ── Journal ──
+  sectionTitle("Journal");
+  const stepEntries = steps
+    .filter(s => project.checklist[s.id])
+    .map(s => ({ date: project.checklist[s.id], title: s.label, type: "etape" }));
+  const manualEntries = (project.journal || []).map(e => ({ date: e.date, title: e.title, type: e.type, description: e.description }));
+  const allEntries = [...stepEntries, ...manualEntries].sort((a, b2) => (a.date < b2.date ? -1 : 1));
+  if (allEntries.length === 0) {
+    line("Aucune entrée dans le journal.", { color: [148, 163, 184] });
+  } else {
+    allEntries.forEach(e => {
+      const typeLabel2 = JOURNAL_TYPES[e.type]?.label || "Autre";
+      line(`${fmtDate(e.date)} — [${typeLabel2}] ${e.title}`, { bold: true, gap: 6 });
+      if (e.description) line(e.description, { indent: 4, color: [100, 116, 139] });
+    });
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const filename = `Cozimo-${sanitizeFilename(project.name)}-${dateStr}.pdf`;
+  doc.save(filename);
+}
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
@@ -2151,6 +2322,8 @@ function Dashboard({ project, onUpdate, onBack }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [apiKey, setApiKey] = useState(null);
   const [aiHistory, setAiHistory] = useState([]);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [pdfError, setPdfError] = useState("");
 
   useEffect(() => {
     loadApiKey().then(setApiKey);
@@ -2162,6 +2335,18 @@ function Dashboard({ project, onUpdate, onBack }) {
   };
   const addAiExchange = (exchange) => {
     setAiHistory(prev => [...prev, exchange].slice(-5));
+  };
+
+  const handleExportPDF = async () => {
+    setPdfGenerating(true);
+    setPdfError("");
+    try {
+      await generateProjectPDF(project);
+    } catch (e) {
+      setPdfError(e.message || "Impossible de générer le PDF.");
+    } finally {
+      setPdfGenerating(false);
+    }
   };
 
   const steps = STEPS_BY_TYPE[project.type] || [];
@@ -2435,6 +2620,13 @@ function Dashboard({ project, onUpdate, onBack }) {
                 })}
               </div>
             </div>
+
+            {/* Export PDF */}
+            <button onClick={handleExportPDF} disabled={pdfGenerating}
+              className="w-full py-3 rounded-xl border border-slate-200 text-slate-700 text-sm font-bold transition-all hover:bg-slate-50 disabled:opacity-50">
+              {pdfGenerating ? "Génération du PDF…" : "📄 Exporter en PDF"}
+            </button>
+            {pdfError && <p className="text-xs text-red-500 text-center -mt-2">{pdfError}</p>}
           </>
         )}
 
