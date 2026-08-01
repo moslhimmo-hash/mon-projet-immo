@@ -1318,6 +1318,35 @@ async function generateProjectPDF(project) {
 }
 
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
+function CozimoLogo({ width = 160, height = 48, dark = false }) {
+  const fill = dark ? "#1a1a2e" : "white";
+  return (
+    <svg width={width} height={height} viewBox="0 0 160 48" xmlns="http://www.w3.org/2000/svg">
+      <text x="0" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>C</text>
+      <text x="26" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>o</text>
+      <text x="52" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>z</text>
+      <circle cx="82" cy="12" r="7" stroke="#B94040" strokeWidth="3.5" fill="none" />
+      <rect x="79" y="19" width="6" height="20" rx="3" fill="#B94040" />
+      <rect x="79" y="29" width="10" height="4" rx="2" fill="#B94040" />
+      <rect x="79" y="35" width="7" height="4" rx="2" fill="#B94040" />
+      <text x="93" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>m</text>
+      <text x="131" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>o</text>
+    </svg>
+  );
+}
+
+function CozimoIcon({ size = 64 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+      <rect width="80" height="80" rx="20" fill="#B94040" />
+      <path
+        d="M40 11 C33 11 27 17 27 24 C27 30 31 35 36 36.5 L36 60 C36 62 38 64 40 64 C42 64 44 62 44 60 L44 57 L48 57 L48 52 L44 52 L44 48 L49 48 L49 43 L44 43 L44 36.5 C49 35 53 30 53 24 C53 17 47 11 40 11 Z M40 17 C44 17 47 20 47 24 C47 28 44 31 40 31 C36 31 33 28 33 24 C33 20 36 17 40 17 Z"
+        fill="white"
+      />
+    </svg>
+  );
+}
+
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
   return (
@@ -1647,10 +1676,16 @@ function NewProjectTypeScreen({ onSelect, onBack }) {
           </button>
         )}
         <div className="text-center mb-8">
-          <div className="mx-auto mb-4 flex items-center justify-center" style={{ width: 64, height: 64, background: "#2563eb", borderRadius: "12px" }}>
-            <span style={{ fontSize: 32 }}>🏠</span>
+          <div className="mx-auto mb-4 flex items-center justify-center">
+            <CozimoIcon size={64} />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">{isHome ? "Cozimo" : "Nouveau projet"}</h1>
+          {isHome ? (
+            <div className="flex justify-center mb-2">
+              <CozimoLogo width={160} height={48} />
+            </div>
+          ) : (
+            <h1 className="text-2xl font-bold text-white mb-2">Nouveau projet</h1>
+          )}
           <p className="text-slate-400 text-sm">{isHome ? "Votre projet immobilier, de A à Z" : "Quel type de projet voulez-vous suivre ?"}</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -2421,6 +2456,7 @@ function Dashboard({ project, onUpdate, onBack }) {
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
+          <div className="mb-4"><CozimoLogo width={90} height={27} /></div>
           <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-4 transition-all">
             ← Mes projets
           </button>
