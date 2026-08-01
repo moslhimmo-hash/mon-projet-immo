@@ -1099,10 +1099,10 @@ function buildAISystemPrompt(project) {
   const nextStep = steps.find(s => !project.checklist[s.id]);
 
   const b = project.budget || {};
-  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
+  const budgetTotal = (parseFloat(b.apportPersonnel) || 0) + (parseFloat(b.capaciteEmprunt) || 0);
   const prixAchat = parseFloat(b.prixAchat) || 0;
   let budgetLine = "non renseigné";
-  if (budgetGlobal > 0) budgetLine = `${fmt(budgetGlobal)} de budget global`;
+  if (budgetTotal > 0) budgetLine = `${fmt(budgetTotal)} de budget total (apport + capacité d'emprunt)`;
   else if (prixAchat > 0) budgetLine = `prix d'achat prévu de ${fmt(prixAchat)}`;
 
   return `Tu es un assistant immobilier expert intégré dans Cozimo.
@@ -1258,29 +1258,76 @@ async function generateProjectPDF(project) {
   // ── Budget ──
   sectionTitle("Budget");
   const b = project.budget || {};
+
+  const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+  const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
+  const budgetTotal = apportPersonnel + capaciteEmprunt;
+
   const prixAchat = parseFloat(b.prixAchat) || 0;
   const neuf = !!b.neuf;
-  const postes = [
-    ["Prix d'achat", prixAchat],
-    ["Frais de notaire", calcNotaire(prixAchat, neuf)],
-    ["Frais d'agence", parseFloat(b.fraisAgence) || 0],
-    ["Budget travaux", parseFloat(b.budgetTravaux) || 0],
-    ["Mobilier", parseFloat(b.mobilier) || 0],
-    ["Électroménager", parseFloat(b.electromenager) || 0],
-    ["Frais bancaires", parseFloat(b.fraisBancaires) || 0],
-    ["Assurance", parseFloat(b.assurance) || 0],
-    ["Taxe foncière (annuelle)", parseFloat(b.taxeFonciere) || 0],
-  ];
-  const totalEngage = postes.reduce((sum, [, v]) => sum + v, 0);
-  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
-  if (totalEngage === 0 && budgetGlobal === 0) {
+  const fraisNotaire = calcNotaire(prixAchat, neuf);
+  const fraisAgence = parseFloat(b.fraisAgence) || 0;
+  const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
+  const fraisCourtier = parseFloat(b.fraisCourtier) || 0;
+  const totalAcquisition = prixAchat + fraisNotaire + fraisAgence + fraisDossierBancaire + fraisCourtier;
+
+  const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
+  const cuisineElectromenager = parseFloat(b.cuisineElectromenager) || 0;
+  const mobilier = parseFloat(b.mobilier) || 0;
+  const decoration = parseFloat(b.decoration) || 0;
+  const totalInstallation = budgetTravaux + cuisineElectromenager + mobilier + decoration;
+
+  const chargesCopro = parseFloat(b.chargesCopro) || 0;
+  const taxeFonciereBudget = parseFloat(b.taxeFonciere) || 0;
+  const assuranceHabitation = parseFloat(b.assuranceHabitation) || 0;
+  const canComputeMensualite = apportPersonnel > 0 && capaciteEmprunt > 0 && prixAchat > 0;
+  const capitalEmprunte = Math.max(0, prixAchat - apportPersonnel);
+  const mensualiteCredit = canComputeMensualite ? calcMensualite(capitalEmprunte, 25, 3.5) : 0;
+  const totalMensuel = chargesCopro + taxeFonciereBudget / 12 + assuranceHabitation + mensualiteCredit;
+
+  const resteDisponible = budgetTotal - totalAcquisition - totalInstallation;
+  const restePct = budgetTotal > 0 ? (resteDisponible / budgetTotal) * 100 : null;
+
+  if (budgetTotal === 0 && totalAcquisition === 0 && totalInstallation === 0) {
     line("Aucune information budgétaire renseignée.", { color: [148, 163, 184] });
   } else {
-    if (budgetGlobal > 0) line(`Budget global disponible : ${pdfAmount(budgetGlobal)}`, { bold: true, gap: 6 });
-    postes.filter(([, v]) => v > 0).forEach(([label, v]) => line(`${label} : ${pdfAmount(v)}`, { indent: 4 }));
-    y += 1;
-    line(`Total engagé : ${pdfAmount(totalEngage)}`, { bold: true, size: 11 });
-    if (budgetGlobal > 0) line(`Reste disponible : ${pdfAmount(budgetGlobal - totalEngage)}`, { bold: true, size: 11, color: budgetGlobal - totalEngage >= 0 ? [4, 120, 87] : [185, 28, 28] });
+    line("Financement", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    if (apportPersonnel > 0) line(`Apport personnel : ${pdfAmount(apportPersonnel)}`, { indent: 4 });
+    if (capaciteEmprunt > 0) line(`Capacité d'emprunt estimée : ${pdfAmount(capaciteEmprunt)}`, { indent: 4 });
+    line(`Budget total : ${pdfAmount(budgetTotal)}`, { bold: true, indent: 4 });
+    y += 2;
+
+    line("Coûts d'acquisition", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    if (prixAchat > 0) line(`Prix d'achat : ${pdfAmount(prixAchat)}`, { indent: 4 });
+    if (prixAchat > 0) line(`Frais de notaire : ${pdfAmount(fraisNotaire)}`, { indent: 4 });
+    if (fraisAgence > 0) line(`Frais d'agence : ${pdfAmount(fraisAgence)}`, { indent: 4 });
+    if (fraisDossierBancaire > 0) line(`Frais de dossier bancaire : ${pdfAmount(fraisDossierBancaire)}`, { indent: 4 });
+    if (fraisCourtier > 0) line(`Frais de courtier : ${pdfAmount(fraisCourtier)}`, { indent: 4 });
+    line(`Total acquisition : ${pdfAmount(totalAcquisition)}`, { bold: true, indent: 4 });
+    y += 2;
+
+    line("Coûts d'installation", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    if (budgetTravaux > 0) line(`Budget travaux : ${pdfAmount(budgetTravaux)}`, { indent: 4 });
+    if (cuisineElectromenager > 0) line(`Cuisine / électroménager : ${pdfAmount(cuisineElectromenager)}`, { indent: 4 });
+    if (mobilier > 0) line(`Mobilier : ${pdfAmount(mobilier)}`, { indent: 4 });
+    if (decoration > 0) line(`Décoration : ${pdfAmount(decoration)}`, { indent: 4 });
+    line(`Total installation : ${pdfAmount(totalInstallation)}`, { bold: true, indent: 4 });
+    y += 2;
+
+    line("Coûts récurrents", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    if (chargesCopro > 0) line(`Charges de copropriété : ${pdfAmount(chargesCopro)}/mois`, { indent: 4 });
+    if (taxeFonciereBudget > 0) line(`Taxe foncière : ${pdfAmount(taxeFonciereBudget)}/an`, { indent: 4 });
+    if (assuranceHabitation > 0) line(`Assurance habitation : ${pdfAmount(assuranceHabitation)}/mois`, { indent: 4 });
+    if (canComputeMensualite) line(`Mensualité crédit estimée : ${pdfAmount(mensualiteCredit)}/mois`, { indent: 4 });
+    line(`Total mensuel : ${pdfAmount(totalMensuel)}/mois`, { bold: true, indent: 4 });
+    y += 3;
+
+    line("Récapitulatif", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+    line(`Budget total : ${pdfAmount(budgetTotal)}`, { indent: 4 });
+    line(`- Total acquisition : ${pdfAmount(totalAcquisition)}`, { indent: 4 });
+    line(`- Total installation : ${pdfAmount(totalInstallation)}`, { indent: 4 });
+    const recapColorPdf = resteDisponible < 0 ? [185, 28, 28] : (restePct != null && restePct <= 10 ? [180, 83, 9] : [4, 120, 87]);
+    line(`= Reste disponible : ${pdfAmount(resteDisponible)}`, { bold: true, size: 11, color: recapColorPdf, indent: 4 });
   }
 
   // ── Contacts ──
@@ -1623,7 +1670,7 @@ function Card({ children, className = "" }) {
   );
 }
 
-function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder }) {
+function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder, hint }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
@@ -1638,6 +1685,7 @@ function Input({ label, value, onChange, type = "text", suffix, prefix, placehol
         />
         {suffix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-l border-slate-200 py-2.5">{suffix}</span>}
       </div>
+      {hint && <span className="text-xs text-slate-400">{hint}</span>}
     </div>
   );
 }
@@ -1801,52 +1849,65 @@ function BudgetTab({ project, onUpdate }) {
   const b = project.budget || {};
   const set = (k, v) => onUpdate(p => ({ ...p, budget: { ...(p.budget || {}), [k]: v } }));
 
+  // Section 1 — Financement
+  const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+  const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
+  const budgetTotal = apportPersonnel + capaciteEmprunt;
+
+  // Section 2 — Coûts d'acquisition
   const prixAchat = parseFloat(b.prixAchat) || 0;
   const neuf = !!b.neuf;
   const fraisNotaire = calcNotaire(prixAchat, neuf);
   const fraisAgence = parseFloat(b.fraisAgence) || 0;
+  const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
+  const fraisCourtier = parseFloat(b.fraisCourtier) || 0;
+  const totalAcquisition = prixAchat + fraisNotaire + fraisAgence + fraisDossierBancaire + fraisCourtier;
+
+  // Section 3 — Coûts d'installation
   const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
+  const cuisineElectromenager = parseFloat(b.cuisineElectromenager) || 0;
   const mobilier = parseFloat(b.mobilier) || 0;
-  const electromenager = parseFloat(b.electromenager) || 0;
-  const fraisBancaires = parseFloat(b.fraisBancaires) || 0;
-  const assurance = parseFloat(b.assurance) || 0;
+  const decoration = parseFloat(b.decoration) || 0;
+  const totalInstallation = budgetTravaux + cuisineElectromenager + mobilier + decoration;
+
+  // Section 4 — Coûts récurrents
+  const chargesCopro = parseFloat(b.chargesCopro) || 0;
   const taxeFonciere = parseFloat(b.taxeFonciere) || 0;
-  const budgetGlobal = parseFloat(b.budgetGlobal) || 0;
+  const assuranceHabitation = parseFloat(b.assuranceHabitation) || 0;
+  const canComputeMensualite = apportPersonnel > 0 && capaciteEmprunt > 0 && prixAchat > 0;
+  const capitalEmprunte = Math.max(0, prixAchat - apportPersonnel);
+  const mensualiteCredit = canComputeMensualite ? calcMensualite(capitalEmprunte, 25, 3.5) : 0;
+  const totalMensuel = chargesCopro + taxeFonciere / 12 + assuranceHabitation + mensualiteCredit;
 
-  const postes = [
-    { key: "prixAchat", label: "Prix d'achat", value: prixAchat, color: "#2563eb" },
-    { key: "fraisNotaire", label: "Frais de notaire", value: fraisNotaire, color: "#8b5cf6" },
-    { key: "fraisAgence", label: "Frais d'agence", value: fraisAgence, color: "#f97316" },
-    { key: "budgetTravaux", label: "Budget travaux", value: budgetTravaux, color: "#f59e0b" },
-    { key: "mobilier", label: "Mobilier", value: mobilier, color: "#14b8a6" },
-    { key: "electromenager", label: "Électroménager", value: electromenager, color: "#06b6d4" },
-    { key: "fraisBancaires", label: "Frais bancaires", value: fraisBancaires, color: "#ec4899" },
-    { key: "assurance", label: "Assurance", value: assurance, color: "#84cc16" },
-    { key: "taxeFonciere", label: "Taxe foncière (annuelle)", value: taxeFonciere, color: "#94a3b8" },
-  ];
-
-  const totalEngage = postes.reduce((sum, p) => sum + p.value, 0);
-  const resteDisponible = budgetGlobal - totalEngage;
+  // Récapitulatif final
+  const resteDisponible = budgetTotal - totalAcquisition - totalInstallation;
+  const restePct = budgetTotal > 0 ? (resteDisponible / budgetTotal) * 100 : null;
+  let recapColor = "#64748b", recapBg = "#f1f5f9";
+  if (budgetTotal > 0) {
+    if (resteDisponible < 0) { recapColor = "#b91c1c"; recapBg = "#fee2e2"; }
+    else if (restePct <= 10) { recapColor = "#b45309"; recapBg = "#fef3c7"; }
+    else { recapColor = "#047857"; recapBg = "#d1fae5"; }
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-          <span>💶</span> Budget global
+          <span>💰</span> Financement (ce qui rentre)
         </h3>
-        <Input label="Budget global disponible" value={b.budgetGlobal || ""} onChange={v => set("budgetGlobal", v)} type="number" suffix="€" placeholder="350000" />
-      </Card>
-
-      <Card>
-        <h3 className="font-bold text-slate-700 mb-4">Récapitulatif</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <Stat label="Total engagé" value={fmt(totalEngage)} accent="text-blue-600" />
-          <Stat label="Reste disponible" value={fmt(resteDisponible)} accent={resteDisponible >= 0 ? "text-green-600" : "text-red-500"} />
+        <div className="flex flex-col gap-4">
+          <Input label="Apport personnel" value={b.apportPersonnel || ""} onChange={v => set("apportPersonnel", v)}
+            type="number" suffix="€" hint="Votre épargne investie directement" />
+          <Input label="Capacité d'emprunt estimée" value={b.capaciteEmprunt || ""} onChange={v => set("capaciteEmprunt", v)}
+            type="number" suffix="€" hint="Montant estimé par votre banque ou courtier" />
+          <Stat label="Budget total = Apport + Capacité d'emprunt" value={fmt(budgetTotal)} accent="text-blue-600" />
         </div>
       </Card>
 
       <Card>
-        <h3 className="font-bold text-slate-700 mb-4">Postes de dépenses</h3>
+        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <span>🏠</span> Coûts d'acquisition
+        </h3>
         <div className="flex flex-col gap-4">
           <Input label="Prix d'achat" value={b.prixAchat || ""} onChange={v => set("prixAchat", v)} type="number" suffix="€" />
           <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -1855,32 +1916,63 @@ function BudgetTab({ project, onUpdate }) {
           </label>
           <Stat label="Frais de notaire (calculé auto)" value={fmt(fraisNotaire)} sub={neuf ? "2,5% — neuf" : "7,5% — ancien"} />
           <Input label="Frais d'agence" value={b.fraisAgence || ""} onChange={v => set("fraisAgence", v)} type="number" suffix="€" />
-          <Input label="Budget travaux" value={b.budgetTravaux || ""} onChange={v => set("budgetTravaux", v)} type="number" suffix="€" />
-          <Input label="Mobilier" value={b.mobilier || ""} onChange={v => set("mobilier", v)} type="number" suffix="€" />
-          <Input label="Électroménager" value={b.electromenager || ""} onChange={v => set("electromenager", v)} type="number" suffix="€" />
-          <Input label="Frais bancaires" value={b.fraisBancaires || ""} onChange={v => set("fraisBancaires", v)} type="number" suffix="€" />
-          <Input label="Assurance" value={b.assurance || ""} onChange={v => set("assurance", v)} type="number" suffix="€" />
-          <Input label="Taxe foncière annuelle" value={b.taxeFonciere || ""} onChange={v => set("taxeFonciere", v)} type="number" suffix="€" />
+          <Input label="Frais de dossier bancaire" value={b.fraisDossierBancaire || ""} onChange={v => set("fraisDossierBancaire", v)} type="number" suffix="€" />
+          <Input label="Frais de courtier" value={b.fraisCourtier || ""} onChange={v => set("fraisCourtier", v)} type="number" suffix="€" />
+          <Stat label="Total acquisition" value={fmt(totalAcquisition)} accent="text-blue-600" />
         </div>
       </Card>
 
       <Card>
-        <h3 className="font-bold text-slate-700 mb-4">Répartition des dépenses</h3>
-        {totalEngage === 0 ? (
-          <p className="text-sm text-slate-400">Ajoutez des postes de dépenses pour voir la répartition.</p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {postes.filter(p => p.value > 0).map(p => (
-              <div key={p.key}>
-                <div className="flex justify-between text-xs text-slate-500 mb-1">
-                  <span>{p.label}</span>
-                  <span className="font-semibold text-slate-600">{fmt(p.value)}</span>
-                </div>
-                <ProgressBar value={p.value} max={totalEngage} color={p.color} />
-              </div>
-            ))}
+        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <span>🛋️</span> Coûts d'installation
+        </h3>
+        <div className="flex flex-col gap-4">
+          <Input label="Budget travaux" value={b.budgetTravaux || ""} onChange={v => set("budgetTravaux", v)} type="number" suffix="€" />
+          <Input label="Cuisine / électroménager" value={b.cuisineElectromenager || ""} onChange={v => set("cuisineElectromenager", v)} type="number" suffix="€" />
+          <Input label="Mobilier" value={b.mobilier || ""} onChange={v => set("mobilier", v)} type="number" suffix="€" />
+          <Input label="Décoration" value={b.decoration || ""} onChange={v => set("decoration", v)} type="number" suffix="€" />
+          <Stat label="Total installation" value={fmt(totalInstallation)} accent="text-blue-600" />
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+          <span>📆</span> Coûts récurrents
+        </h3>
+        <div className="flex flex-col gap-4">
+          <Input label="Charges de copropriété" value={b.chargesCopro || ""} onChange={v => set("chargesCopro", v)} type="number" suffix="€/mois" />
+          <Input label="Taxe foncière" value={b.taxeFonciere || ""} onChange={v => set("taxeFonciere", v)} type="number" suffix="€/an" />
+          <Input label="Assurance habitation" value={b.assuranceHabitation || ""} onChange={v => set("assuranceHabitation", v)} type="number" suffix="€/mois" />
+          <Stat label="Mensualité crédit (calculée auto)" value={canComputeMensualite ? fmt(mensualiteCredit) : "—"}
+            sub="sur 25 ans à 3,5% — nécessite apport, capacité d'emprunt et prix d'achat" />
+          <Stat label="Total mensuel" value={fmt(totalMensuel)} accent="text-blue-600" />
+        </div>
+      </Card>
+
+      {/* Récapitulatif final */}
+      <Card>
+        <h3 className="font-bold text-slate-700 mb-4">Récapitulatif</h3>
+        <div className="flex flex-col gap-2 text-sm text-slate-600 mb-3">
+          <div className="flex justify-between">
+            <span>Budget total</span>
+            <span className="font-semibold text-slate-800">{fmt(budgetTotal)}</span>
           </div>
-        )}
+          <div className="flex justify-between">
+            <span>− Total acquisition</span>
+            <span>{fmt(totalAcquisition)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>− Total installation</span>
+            <span>{fmt(totalInstallation)}</span>
+          </div>
+        </div>
+        <div className="p-4 rounded-xl" style={{ background: recapBg }}>
+          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: recapColor }}>= Reste disponible</div>
+          <div className="text-2xl font-bold mt-0.5" style={{ color: recapColor }}>{fmt(resteDisponible)}</div>
+          {restePct != null && (
+            <div className="text-xs mt-1" style={{ color: recapColor }}>{restePct.toFixed(1)}% du budget total</div>
+          )}
+        </div>
       </Card>
     </div>
   );
