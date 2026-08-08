@@ -23,3 +23,12 @@ body {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
 }
+
+/* react-native-web also pins #root and its flex wrapper to a fixed height:100%
+   (viewport height), instead of min-height — any screen taller than one viewport
+   (e.g. a full-height navy background) gets clipped there, revealing the ivory
+   background underneath partway through the content instead of at the true end. */
+#root, #root > div {
+  height: auto;
+  min-height: 100%;
+}

@@ -1243,6 +1243,10 @@ async function generateProjectPDF(project) {
     if (!phases[key]) phases[key] = [];
     phases[key].push(s);
   });
+  (project.customSteps || []).forEach(cs => {
+    if (!phases[cs.phaseKey]) phases[cs.phaseKey] = [];
+    phases[cs.phaseKey].push({ id: cs.id, label: cs.label, custom: true });
+  });
   Object.entries(phases).forEach(([phase, items]) => {
     const phaseDone = items.filter(s => project.checklist[s.id]).length;
     line(`${phase} (${phaseDone}/${items.length})`, { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
@@ -1250,7 +1254,8 @@ async function generateProjectPDF(project) {
       const checked = !!project.checklist[s.id];
       const deadline = project.deadlines?.[s.id];
       const deadlineText = deadline ? ` — échéance : ${fmtDate(deadline)}` : "";
-      line(`${checked ? "[x]" : "[ ]"} ${s.label}${deadlineText}`, { indent: 4, color: checked ? [16, 185, 129] : [71, 85, 105] });
+      const customText = s.custom ? " (Personnalisée)" : "";
+      line(`${checked ? "[x]" : "[ ]"} ${s.label}${customText}${deadlineText}`, { indent: 4, color: checked ? [16, 185, 129] : [71, 85, 105] });
     });
     y += 2;
   });
@@ -1720,7 +1725,7 @@ function NewProjectTypeScreen({ onSelect, onBack }) {
   const isHome = !onBack;
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
-      style={{ background: "#1a1a2e" }}>
+      style={{ background: "#1a1a2e", paddingTop: "3.5rem" }}>
       <div className="max-w-lg w-full">
         {onBack && (
           <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-6 transition-all">
@@ -1728,7 +1733,7 @@ function NewProjectTypeScreen({ onSelect, onBack }) {
           </button>
         )}
         <div className="text-center mb-8">
-          <div className="mx-auto mb-4 flex items-center justify-center">
+          <div className="mx-auto mb-4 flex items-center justify-center" style={{ paddingTop: 4 }}>
             <CozimoIcon size={64} />
           </div>
           {isHome ? (
@@ -1833,10 +1838,17 @@ function ProjectsScreen({ projects, onOpen, onCreate }) {
         </div>
       </div>
       <div className="max-w-2xl mx-auto px-5 -mt-6 pb-10">
-        <button onClick={onCreate}
-          className="w-full mb-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg">
-          + Nouveau projet
-        </button>
+        <div className="flex gap-2 mb-4">
+          <button onClick={onCreate}
+            className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg">
+            + Nouveau projet
+          </button>
+          <button onClick={onCreate}
+            className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-500 text-sm font-semibold hover:bg-slate-50 transition-all"
+            title="Revenir à l'écran d'accueil">
+            🏠 Accueil
+          </button>
+        </div>
         <div className="flex flex-col gap-3">
           {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
         </div>
@@ -2450,6 +2462,9 @@ function Dashboard({ project, onUpdate, onBack }) {
   const [proStep, setProStep] = useState(null);
   const [editingDeadline, setEditingDeadline] = useState(null);
   const [tempDate, setTempDate] = useState("");
+  const [addingStepPhase, setAddingStepPhase] = useState(null);
+  const [newStepLabel, setNewStepLabel] = useState("");
+  const [newStepImportance, setNewStepImportance] = useState("importante");
   const [aiOpen, setAiOpen] = useState(false);
   const [apiKey, setApiKey] = useState(null);
   const [aiHistory, setAiHistory] = useState([]);
@@ -2495,6 +2510,10 @@ function Dashboard({ project, onUpdate, onBack }) {
     if (!phases[key]) phases[key] = [];
     phases[key].push(s);
   });
+  (project.customSteps || []).forEach(cs => {
+    if (!phases[cs.phaseKey]) phases[cs.phaseKey] = [];
+    phases[cs.phaseKey].push({ id: cs.id, label: cs.label, importance: cs.importance, phase: cs.phaseKey, month: null, info: null, custom: true });
+  });
 
   const upcomingDeadlines = steps
     .filter(s => project.deadlines?.[s.id] && !project.checklist[s.id])
@@ -2511,6 +2530,31 @@ function Dashboard({ project, onUpdate, onBack }) {
   const addContact = (contact) => onUpdate(p => ({ ...p, contacts: [...(p.contacts || []), contact] }));
   const deleteContact = (id) => onUpdate(p => ({ ...p, contacts: (p.contacts || []).filter(c => c.id !== id) }));
   const addJournalEntry = (entry) => onUpdate(p => ({ ...p, journal: [...(p.journal || []), entry] }));
+
+  const openAddStepForm = (phaseKey) => {
+    setNewStepLabel("");
+    setNewStepImportance("importante");
+    setAddingStepPhase(addingStepPhase === phaseKey ? null : phaseKey);
+  };
+  const addCustomStep = (phaseKey) => {
+    if (!newStepLabel.trim()) return;
+    const newStep = { id: `custom-${uid()}`, phaseKey, label: newStepLabel.trim(), importance: newStepImportance };
+    onUpdate(p => ({ ...p, customSteps: [...(p.customSteps || []), newStep] }));
+    setNewStepLabel("");
+    setNewStepImportance("importante");
+    setAddingStepPhase(null);
+  };
+  const deleteCustomStep = (stepId) => {
+    onUpdate(p => {
+      const nextChecklist = { ...p.checklist };
+      delete nextChecklist[stepId];
+      return {
+        ...p,
+        customSteps: (p.customSteps || []).filter(cs => cs.id !== stepId),
+        checklist: nextChecklist,
+      };
+    });
+  };
 
   const openDeadlineEditor = (stepId) => {
     setTempDate(project.deadlines?.[stepId] || "");
@@ -2683,10 +2727,19 @@ function Dashboard({ project, onUpdate, onBack }) {
                                   {s.label}
                                 </span>
                                 {s.tag && <Tag color={s.tag === "Vente" ? "vente" : "achat"}>{s.tag}</Tag>}
+                                {s.custom && <Tag color="default">Personnalisée</Tag>}
                               </div>
                             </button>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span className="text-xs text-slate-300">{s.month}</span>
+                              {s.custom && (
+                                <button
+                                  onClick={() => deleteCustomStep(s.id)}
+                                  className="w-5 h-5 rounded-full flex items-center justify-center text-xs transition-all flex-shrink-0 bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-500"
+                                  title="Supprimer cette étape">
+                                  ✕
+                                </button>
+                              )}
                               {deadlineInfo && (
                                 <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ background: deadlineInfo.bg, color: deadlineInfo.color }}>
                                   {deadlineInfo.label}
@@ -2747,6 +2800,41 @@ function Dashboard({ project, onUpdate, onBack }) {
                           );
                         })}
                       </div>
+
+                      {addingStepPhase === phase ? (
+                        <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-slate-100">
+                          <input
+                            value={newStepLabel}
+                            onChange={e => setNewStepLabel(e.target.value)}
+                            placeholder="Nom de l'étape"
+                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          />
+                          <select
+                            value={newStepImportance}
+                            onChange={e => setNewStepImportance(e.target.value)}
+                            className="border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          >
+                            <option value="essentielle">Essentielle</option>
+                            <option value="importante">Importante</option>
+                            <option value="utile">Utile</option>
+                          </select>
+                          <div className="flex gap-2">
+                            <button onClick={() => setAddingStepPhase(null)}
+                              className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:bg-slate-50 transition-all">
+                              Annuler
+                            </button>
+                            <button onClick={() => addCustomStep(phase)}
+                              className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-all">
+                              Ajouter
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button onClick={() => openAddStepForm(phase)}
+                          className="mt-3 pt-3 border-t border-slate-100 w-full text-left text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all">
+                          + Ajouter une étape
+                        </button>
+                      )}
                     </Card>
                   );
                 })}
@@ -2827,6 +2915,7 @@ export default function App() {
       deadlines: {},
       notifiedDeadlines: {},
       biens: [],
+      customSteps: [],
     };
     const next = [...projects, project];
     setProjects(next);
