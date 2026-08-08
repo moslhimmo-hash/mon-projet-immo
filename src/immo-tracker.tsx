@@ -28,6 +28,20 @@ async function saveApiKey(key) {
   try { await window.storage.set(AI_KEY_STORAGE, key); } catch {}
 }
 
+// Bibliothèque d'inspirations — commune à tous les projets, stockage dédié.
+const INSPIRATIONS_STORAGE = "cozimo-inspirations";
+
+async function loadInspirations() {
+  try {
+    const r = await window.storage.get(INSPIRATIONS_STORAGE);
+    return r ? JSON.parse(r.value) : [];
+  } catch { return []; }
+}
+
+async function saveInspirations(list) {
+  try { await window.storage.set(INSPIRATIONS_STORAGE, JSON.stringify(list)); } catch {}
+}
+
 function uid() {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -52,6 +66,23 @@ const IMPORTANCE = {
   importante: { label: "Importante", color: "#b45309", bg: "#fef3c7" },
   utile: { label: "Utile", color: "#047857", bg: "#d1fae5" },
 };
+
+// Palette cyclique utilisée pour distinguer visuellement les badges projet (inspirations, etc.)
+const PROJECT_COLORS = [
+  { color: "#1d4ed8", bg: "#dbeafe" },
+  { color: "#047857", bg: "#d1fae5" },
+  { color: "#b45309", bg: "#fef3c7" },
+  { color: "#7c3aed", bg: "#ede9fe" },
+  { color: "#be185d", bg: "#fce7f3" },
+  { color: "#0e7490", bg: "#cffafe" },
+  { color: "#b91c1c", bg: "#fee2e2" },
+  { color: "#4d7c0f", bg: "#ecfccb" },
+];
+
+function projectColor(projects, projectId) {
+  const idx = projects.findIndex(p => p.id === projectId);
+  return PROJECT_COLORS[(idx >= 0 ? idx : 0) % PROJECT_COLORS.length];
+}
 
 const CONTACT_ROLES = [
   { value: "courtier", label: "Courtier" },
@@ -1838,7 +1869,7 @@ function ProjectCard({ project, onOpen }) {
   );
 }
 
-function ProjectsScreen({ projects, onOpen, onCreate }) {
+function ProjectsScreen({ projects, onOpen, onCreate, onInspirations }) {
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
@@ -1863,10 +1894,173 @@ function ProjectsScreen({ projects, onOpen, onCreate }) {
             title="Revenir à l'écran d'accueil">
             🏠 Accueil
           </button>
+          <button onClick={onInspirations}
+            className="px-4 py-3 rounded-xl border border-slate-200 bg-white text-slate-500 text-sm font-semibold hover:bg-slate-50 transition-all"
+            title="Bibliothèque d'inspirations">
+            💡 Inspirations
+          </button>
         </div>
         <div className="flex flex-col gap-3">
           {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function InspirationForm({ projects, initial, onSave, onCancel }) {
+  const [form, setForm] = useState(initial || { url: "", title: "", description: "", projectId: "" });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = () => {
+    if (!form.url.trim() || !form.title.trim()) return;
+    onSave({
+      id: form.id || uid(),
+      url: form.url.trim(),
+      title: form.title.trim(),
+      description: form.description || "",
+      projectId: form.projectId || null,
+      createdAt: form.createdAt || new Date().toISOString(),
+    });
+  };
+
+  return (
+    <Card>
+      <div className="flex flex-col gap-4">
+        <Input label="URL" value={form.url} onChange={v => set("url", v)} placeholder="https://..." />
+        <Input label="Titre" value={form.title} onChange={v => set("title", v)} placeholder="Ex : Canapé en velours vert" />
+        <Input label="Description" value={form.description} onChange={v => set("description", v)}
+          placeholder="Ex: canapé pour salon, artisan pour salle de bain, carrelage chambre..." />
+        <p className="text-xs text-slate-400 -mt-2">💡 Plus vous détaillez, plus vous vous en souviendrez dans 3 mois !</p>
+        <Select label="Rattacher à un projet" value={form.projectId || ""} onChange={v => set("projectId", v)}
+          options={[{ value: "", label: "Aucun projet" }, ...projects.map(p => ({ value: p.id, label: p.name }))]} />
+        <div className="flex gap-3">
+          <button onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-all">
+            Annuler
+          </button>
+          <button onClick={submit}
+            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function InspirationCard({ inspiration, projects, onEdit, onDelete }) {
+  const project = projects.find(p => p.id === inspiration.projectId);
+  const colors = project ? projectColor(projects, project.id) : null;
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="min-w-0 flex-1">
+          <div className="font-bold text-slate-800 text-sm truncate">{inspiration.title}</div>
+          <a href={inspiration.url} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-blue-600 hover:underline truncate block">
+            {inspiration.url}
+          </a>
+        </div>
+        <div className="flex gap-1 flex-shrink-0">
+          <button onClick={() => onEdit(inspiration)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-xs bg-slate-100 text-slate-500 hover:bg-slate-200 transition-all">
+            ✎
+          </button>
+          <button onClick={() => onDelete(inspiration.id)}
+            className="w-7 h-7 rounded-full flex items-center justify-center text-xs bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-500 transition-all">
+            ✕
+          </button>
+        </div>
+      </div>
+      {inspiration.description && <p className="text-sm text-slate-600 mb-2">{inspiration.description}</p>}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        {project ? (
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: colors.bg, color: colors.color }}>
+            {project.name}
+          </span>
+        ) : <span />}
+        <span className="text-xs text-slate-400">{fmtDate(inspiration.createdAt)}</span>
+      </div>
+    </Card>
+  );
+}
+
+function InspirationsScreen({ inspirations, projects, onBack, onSave, onDelete }) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [filter, setFilter] = useState("all");
+
+  const filtered = filter === "all" ? inspirations : inspirations.filter(i => i.projectId === filter);
+  const sorted = [...filtered].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  const handleSave = (insp) => {
+    onSave(insp);
+    setFormOpen(false);
+    setEditing(null);
+  };
+
+  return (
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
+      <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
+        <div className="max-w-2xl mx-auto">
+          <button onClick={onBack} className="text-slate-400 hover:text-white text-xs mb-4 transition-all">
+            ← Mes projets
+          </button>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px" }}>
+              <span style={{ fontSize: 20 }}>💡</span>
+            </div>
+            <h1 className="text-2xl font-bold">Inspirations</h1>
+          </div>
+          <p className="text-slate-400 text-sm">
+            {inspirations.length} inspiration{inspirations.length > 1 ? "s" : ""} enregistrée{inspirations.length > 1 ? "s" : ""}
+          </p>
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-5 -mt-6 pb-10 flex flex-col gap-4">
+        {!formOpen && (
+          <button onClick={() => { setEditing(null); setFormOpen(true); }}
+            className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all shadow-lg">
+            + Ajouter une inspiration
+          </button>
+        )}
+
+        {formOpen && (
+          <InspirationForm projects={projects} initial={editing}
+            onSave={handleSave}
+            onCancel={() => { setFormOpen(false); setEditing(null); }} />
+        )}
+
+        {!formOpen && projects.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setFilter("all")}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-all ${filter === "all" ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-500 bg-white"}`}>
+              Toutes
+            </button>
+            {projects.map(p => (
+              <button key={p.id} onClick={() => setFilter(p.id)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full transition-all ${filter === p.id ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-500 bg-white"}`}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {!formOpen && (
+          sorted.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-4">Aucune inspiration pour l'instant.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {sorted.map(insp => (
+                <InspirationCard key={insp.id} inspiration={insp} projects={projects}
+                  onEdit={(i) => { setEditing(i); setFormOpen(true); }}
+                  onDelete={onDelete} />
+              ))}
+            </div>
+          )
+        )}
       </div>
     </div>
   );
@@ -2884,6 +3078,7 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [draftType, setDraftType] = useState(null);
+  const [inspirations, setInspirations] = useState([]);
 
   useEffect(() => {
     loadData().then(d => {
@@ -2897,6 +3092,7 @@ export default function App() {
       setProjects(checked);
       if (changed) saveData({ projects: checked, activeId: activeIdLoaded });
     });
+    loadInspirations().then(setInspirations);
   }, []);
 
   useEffect(() => {
@@ -2908,6 +3104,23 @@ export default function App() {
   }, []);
 
   const openProjectsList = () => setScreen("projects");
+  const openInspirations = () => setScreen("inspirations");
+
+  const saveInspiration = (insp) => {
+    setInspirations(prev => {
+      const already = prev.some(i => i.id === insp.id);
+      const next = already ? prev.map(i => (i.id === insp.id ? insp : i)) : [...prev, insp];
+      saveInspirations(next);
+      return next;
+    });
+  };
+  const deleteInspiration = (id) => {
+    setInspirations(prev => {
+      const next = prev.filter(i => i.id !== id);
+      saveInspirations(next);
+      return next;
+    });
+  };
 
   const startNewProject = () => {
     setDraftType(null);
@@ -2975,8 +3188,18 @@ export default function App() {
     content = <NewProjectDetailsScreen type={draftType} onCreate={createProject} onBack={() => setScreen("new-type")} />;
   } else if (screen === "dashboard" && activeProject) {
     content = <Dashboard project={activeProject} onUpdate={updateActiveProject} onBack={openProjectsList} />;
+  } else if (screen === "inspirations") {
+    content = (
+      <InspirationsScreen
+        inspirations={inspirations}
+        projects={projects}
+        onBack={openProjectsList}
+        onSave={saveInspiration}
+        onDelete={deleteInspiration}
+      />
+    );
   } else {
-    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} />;
+    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} onInspirations={openInspirations} />;
   }
 
   return (
