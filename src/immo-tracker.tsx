@@ -1017,6 +1017,399 @@ function calcMensualite(capital, duree, taux) {
   return capital * r / (1 - Math.pow(1 + r, -n));
 }
 
+// ─── MOTEUR BUDGÉTAIRE DYNAMIQUE ────────────────────────────────────────────────
+// Un même jeu de sections/champs est partagé entre les familles de projet qui en
+// ont besoin (ex : "Acquisition" et "Financement" sont identiques pour l'achat RP
+// et l'investissement locatif), au lieu de dupliquer 8 budgets indépendants.
+const BUDGET_FAMILY_BY_TYPE = {
+  "achat-rp": "achat",
+  "vente": "vente",
+  "investissement-locatif": "investissement",
+  "vente-achat": "vente-achat",
+};
+
+function getBudgetFamily(type) {
+  return BUDGET_FAMILY_BY_TYPE[type] || "generic";
+}
+
+const REGIME_FISCAL_OPTIONS = [
+  { value: "micro-foncier", label: "Micro-foncier" },
+  { value: "reel", label: "Réel" },
+  { value: "lmnp", label: "LMNP" },
+  { value: "sci", label: "SCI" },
+];
+
+const BUDGET_SECTIONS = {
+  financement: {
+    id: "financement", title: "Financement", icon: "💰", defaultOpen: false,
+    fields: [
+      { key: "apportPersonnel", label: "Apport personnel", suffix: "€", hint: "Votre épargne investie directement" },
+      { key: "montantEmprunte", label: "Montant emprunté", suffix: "€" },
+      { key: "tauxNominal", label: "Taux nominal", suffix: "%", placeholder: "3.5" },
+      { key: "dureeAns", label: "Durée", suffix: "ans", placeholder: "25" },
+      { key: "mensualiteHorsAssurance", label: "Mensualité hors assurance", type: "computed", suffix: "€/mois" },
+      { key: "assuranceEmprunteur", label: "Assurance emprunteur", suffix: "€/mois" },
+      { key: "coutTotalCredit", label: "Coût total du crédit", type: "computed", suffix: "€" },
+    ],
+  },
+  acquisition: {
+    id: "acquisition", title: "Acquisition", icon: "🏠", defaultOpen: false,
+    fields: [
+      { key: "prixAchat", label: "Prix d'achat", suffix: "€" },
+      { key: "neuf", label: "Bien neuf (frais de notaire à 2,5% au lieu de 7,5%)", type: "checkbox" },
+      { key: "fraisNotaire", label: "Frais de notaire", type: "computed", suffix: "€" },
+      { key: "fraisAgence", label: "Frais d'agence", suffix: "€" },
+      { key: "fraisCourtage", label: "Frais de courtage", suffix: "€" },
+      { key: "fraisDossierBancaire", label: "Frais de dossier bancaire", suffix: "€" },
+      { key: "fraisGarantiePret", label: "Frais de garantie du prêt", suffix: "€" },
+      { key: "totalAcquisition", label: "Total acquisition", type: "computed", suffix: "€" },
+    ],
+  },
+  "avant-emenagement": {
+    id: "avant-emenagement", title: "Avant emménagement", icon: "🎁", defaultOpen: false,
+    fields: [
+      { key: "travauxGlobal", label: "Travaux (global)", suffix: "€" },
+      { key: "electromenager", label: "Électroménager", suffix: "€" },
+      { key: "mobilier", label: "Mobilier", suffix: "€" },
+      { key: "decoration", label: "Décoration", suffix: "€" },
+      { key: "totalAvantEmenagement", label: "Total avant emménagement", type: "computed", suffix: "€" },
+    ],
+  },
+  installation: {
+    id: "installation", title: "Installation", icon: "🔑", defaultOpen: false,
+    fields: [
+      { key: "demenagement", label: "Déménagement", suffix: "€" },
+      { key: "assuranceHabitationSetup", label: "Assurance habitation", suffix: "€" },
+      { key: "serrurerie", label: "Serrurerie", suffix: "€" },
+      { key: "petitsEquipements", label: "Petits équipements", suffix: "€" },
+      { key: "totalInstallation", label: "Total installation", type: "computed", suffix: "€" },
+    ],
+  },
+  "couts-recurrents": {
+    id: "couts-recurrents", title: "Coûts récurrents", icon: "📆", defaultOpen: false,
+    fields: [
+      { key: "mensualiteCredit", label: "Mensualité crédit", type: "computed", suffix: "€/mois", sub: "reprise auto du financement" },
+      { key: "assuranceEmprunteurRecurrent", label: "Assurance emprunteur", type: "computed", suffix: "€/mois", sub: "reprise auto du financement" },
+      { key: "chargesCopro", label: "Charges de copropriété", suffix: "€/mois" },
+      { key: "taxeFonciereAnnuelle", label: "Taxe foncière", suffix: "€/an" },
+      { key: "assuranceHabitationMensuelle", label: "Assurance habitation", suffix: "€/mois" },
+      { key: "energie", label: "Énergie", suffix: "€/mois" },
+      { key: "internet", label: "Internet", suffix: "€/mois" },
+      { key: "totalMensuel", label: "Total mensuel", type: "computed", suffix: "€/mois" },
+    ],
+  },
+  "valeur-vente": {
+    id: "valeur-vente", title: "Valeur de vente", icon: "🏷️", defaultOpen: false,
+    fields: [
+      { key: "prixAffiche", label: "Prix affiché", suffix: "€" },
+      { key: "prixVenteEstime", label: "Prix de vente estimé", suffix: "€" },
+      { key: "prixMinimumAcceptable", label: "Prix minimum acceptable", suffix: "€" },
+    ],
+  },
+  "frais-vente": {
+    id: "frais-vente", title: "Frais de vente", icon: "💸", defaultOpen: false,
+    fields: [
+      { key: "commissionAgence", label: "Commission agence", suffix: "€" },
+      { key: "diagnostics", label: "Diagnostics", suffix: "€" },
+      { key: "homeStaging", label: "Home staging / petits travaux", suffix: "€" },
+      { key: "photographe", label: "Photographe", suffix: "€" },
+      { key: "demenagementVente", label: "Déménagement", suffix: "€" },
+      { key: "mainleveeHypothecaire", label: "Mainlevée hypothécaire éventuelle", suffix: "€" },
+      { key: "totalFraisVente", label: "Total frais de vente", type: "computed", suffix: "€" },
+    ],
+  },
+  "credit-existant": {
+    id: "credit-existant", title: "Crédit existant", icon: "🏦", defaultOpen: false,
+    fields: [
+      { key: "capitalRestantDu", label: "Capital restant dû", suffix: "€" },
+      { key: "indemnitesRemboursementAnticipe", label: "Indemnités de remboursement anticipé", suffix: "€" },
+      { key: "totalCreditExistant", label: "Total crédit", type: "computed", suffix: "€" },
+    ],
+  },
+  "fiscalite-vente": {
+    id: "fiscalite-vente", title: "Fiscalité", icon: "🧾", defaultOpen: false,
+    fields: [
+      { key: "plusValueEventuelle", label: "Plus-value éventuelle", suffix: "€" },
+      { key: "exonerationRP", label: "Exonération résidence principale", type: "checkbox" },
+      { key: "impotsEstimesVente", label: "Impôts estimés", suffix: "€" },
+    ],
+  },
+  "travaux-invest": {
+    id: "travaux-invest", title: "Travaux", icon: "🔨", defaultOpen: false,
+    fields: [
+      { key: "travauxImmediats", label: "Travaux immédiats", suffix: "€" },
+      { key: "travauxDifferes", label: "Travaux différés", suffix: "€" },
+      { key: "ameublementEquipement", label: "Ameublement / équipement", suffix: "€" },
+      { key: "totalTravauxInvest", label: "Total travaux", type: "computed", suffix: "€" },
+    ],
+  },
+  revenus: {
+    id: "revenus", title: "Revenus", icon: "📈", defaultOpen: false,
+    fields: [
+      { key: "loyerMensuel", label: "Loyer mensuel", suffix: "€/mois" },
+      { key: "chargesRecuperables", label: "Charges récupérables", suffix: "€/mois" },
+      { key: "autresRevenus", label: "Autres revenus", suffix: "€/mois" },
+      { key: "vacanceLocativeEstimee", label: "Vacance locative estimée", suffix: "%" },
+      { key: "loyerEffectif", label: "Loyer effectif", type: "computed", suffix: "€/mois" },
+    ],
+  },
+  "charges-invest": {
+    id: "charges-invest", title: "Charges", icon: "📉", defaultOpen: false,
+    fields: [
+      { key: "chargesCoproNonRecuperables", label: "Charges copro non récupérables", suffix: "€/mois" },
+      { key: "taxeFonciereInvest", label: "Taxe foncière", suffix: "€/an" },
+      { key: "assurancePNO", label: "Assurance PNO", suffix: "€/mois" },
+      { key: "assuranceGLI", label: "Assurance GLI", suffix: "€/mois" },
+      { key: "gestionLocativePct", label: "Gestion locative", suffix: "%" },
+      { key: "entretienProvision", label: "Entretien / provision travaux", suffix: "€/mois" },
+      { key: "totalChargesInvest", label: "Total charges", type: "computed", suffix: "€/mois" },
+    ],
+  },
+  "fiscalite-invest": {
+    id: "fiscalite-invest", title: "Fiscalité", icon: "🧾", defaultOpen: false,
+    fields: [
+      { key: "regimeFiscal", label: "Régime fiscal", type: "select", options: REGIME_FISCAL_OPTIONS },
+      { key: "impotEstimeInvest", label: "Impôt estimé", suffix: "€" },
+    ],
+  },
+  transition: {
+    id: "transition", title: "Transition", icon: "↔️", defaultOpen: false,
+    fields: [
+      { key: "netVendeurReprise", label: "Net vendeur", type: "computed", suffix: "€", sub: "repris du module Vente" },
+      { key: "capitalRestantDuReprise", label: "Capital restant dû", type: "computed", suffix: "€", sub: "repris du module Vente" },
+      { key: "cashDisponibleApresVente", label: "Cash disponible après vente", type: "computed", suffix: "€" },
+      { key: "apportUtiliseReprise", label: "Apport utilisé pour le nouvel achat", type: "computed", suffix: "€", sub: "repris du module Achat" },
+      { key: "epargneConservee", label: "Épargne conservée", type: "computed", suffix: "€" },
+      { key: "fraisDoubleResidence", label: "Frais de double résidence", suffix: "€" },
+      { key: "fraisDemenagementTransition", label: "Frais de déménagement", suffix: "€" },
+      { key: "pretRelaisActif", label: "Prêt relais", type: "checkbox" },
+      { key: "pretRelaisMontant", label: "Montant du prêt relais", suffix: "€" },
+      { key: "pretRelaisTaux", label: "Taux du prêt relais", suffix: "%" },
+      { key: "pretRelaisDureeMois", label: "Durée du prêt relais", suffix: "mois" },
+      { key: "interetsPretRelais", label: "Intérêts du prêt relais", type: "computed", suffix: "€" },
+      { key: "dureeChevauchementMois", label: "Durée estimée du chevauchement", suffix: "mois" },
+      { key: "seuilEpargneMin", label: "Seuil de sécurité — épargne minimale souhaitée", suffix: "€", hint: "Je veux conserver au minimum ce montant d'épargne" },
+    ],
+  },
+};
+
+const BUDGET_SCHEMA = {
+  achat: ["financement", "acquisition", "avant-emenagement", "installation", "couts-recurrents"],
+  vente: ["valeur-vente", "frais-vente", "credit-existant", "fiscalite-vente"],
+  investissement: ["acquisition", "travaux-invest", "financement", "revenus", "charges-invest", "fiscalite-invest"],
+  "vente-achat": ["financement", "acquisition", "avant-emenagement", "installation", "couts-recurrents", "valeur-vente", "frais-vente", "credit-existant", "fiscalite-vente", "transition"],
+};
+
+function formatFieldValue(value, suffix) {
+  if (suffix === "%") return fmtPct(value);
+  if (suffix === "€/mois") return `${fmt(value)}/mois`;
+  if (suffix === "€/an") return `${fmt(value)}/an`;
+  return fmt(value);
+}
+
+// Calcule tous les champs "calculé auto" + les indicateurs (budgetTotal/dejaEngage/resteDisponible)
+// pour une famille de projet donnée, à partir des données brutes saisies (project.budget).
+function computeBudgetDerived(family, b) {
+  const d = {};
+
+  const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+  const montantEmprunte = parseFloat(b.montantEmprunte) || 0;
+  const tauxNominal = parseFloat(b.tauxNominal) || 0;
+  const dureeAns = parseFloat(b.dureeAns) || 0;
+  const assuranceEmprunteur = parseFloat(b.assuranceEmprunteur) || 0;
+  d.mensualiteHorsAssurance = (montantEmprunte > 0 && dureeAns > 0) ? calcMensualite(montantEmprunte, dureeAns, tauxNominal) : 0;
+  d.coutTotalCredit = dureeAns > 0 ? Math.max(0, (d.mensualiteHorsAssurance + assuranceEmprunteur) * dureeAns * 12 - montantEmprunte) : 0;
+
+  const prixAchat = parseFloat(b.prixAchat) || 0;
+  const neuf = !!b.neuf;
+  d.fraisNotaire = calcNotaire(prixAchat, neuf);
+  const fraisAgence = parseFloat(b.fraisAgence) || 0;
+  const fraisCourtage = parseFloat(b.fraisCourtage) || 0;
+  const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
+  const fraisGarantiePret = parseFloat(b.fraisGarantiePret) || 0;
+  d.totalAcquisition = prixAchat + d.fraisNotaire + fraisAgence + fraisCourtage + fraisDossierBancaire + fraisGarantiePret;
+
+  if (family === "achat" || family === "vente-achat") {
+    const travauxGlobal = parseFloat(b.travauxGlobal) || 0;
+    const electromenager = parseFloat(b.electromenager) || 0;
+    const mobilier = parseFloat(b.mobilier) || 0;
+    const decoration = parseFloat(b.decoration) || 0;
+    d.totalAvantEmenagement = travauxGlobal + electromenager + mobilier + decoration;
+
+    const demenagement = parseFloat(b.demenagement) || 0;
+    const assuranceHabitationSetup = parseFloat(b.assuranceHabitationSetup) || 0;
+    const serrurerie = parseFloat(b.serrurerie) || 0;
+    const petitsEquipements = parseFloat(b.petitsEquipements) || 0;
+    d.totalInstallation = demenagement + assuranceHabitationSetup + serrurerie + petitsEquipements;
+
+    d.mensualiteCredit = d.mensualiteHorsAssurance;
+    d.assuranceEmprunteurRecurrent = assuranceEmprunteur;
+    const chargesCopro = parseFloat(b.chargesCopro) || 0;
+    const taxeFonciereAnnuelle = parseFloat(b.taxeFonciereAnnuelle) || 0;
+    const assuranceHabitationMensuelle = parseFloat(b.assuranceHabitationMensuelle) || 0;
+    const energie = parseFloat(b.energie) || 0;
+    const internet = parseFloat(b.internet) || 0;
+    d.totalMensuel = d.mensualiteCredit + d.assuranceEmprunteurRecurrent + chargesCopro + taxeFonciereAnnuelle / 12 + assuranceHabitationMensuelle + energie + internet;
+
+    d.coutTotalProjet = d.totalAcquisition + d.totalAvantEmenagement + d.totalInstallation;
+    d.tresorerieRestanteApresAcquisition = (apportPersonnel + montantEmprunte) - d.coutTotalProjet;
+    d.coutMensuelReelLogement = d.totalMensuel;
+    d.epargneRestante = apportPersonnel - Math.max(0, d.coutTotalProjet - montantEmprunte);
+  }
+
+  if (family === "vente" || family === "vente-achat") {
+    const commissionAgence = parseFloat(b.commissionAgence) || 0;
+    const diagnostics = parseFloat(b.diagnostics) || 0;
+    const homeStaging = parseFloat(b.homeStaging) || 0;
+    const photographe = parseFloat(b.photographe) || 0;
+    const demenagementVente = parseFloat(b.demenagementVente) || 0;
+    const mainleveeHypothecaire = parseFloat(b.mainleveeHypothecaire) || 0;
+    d.totalFraisVente = commissionAgence + diagnostics + homeStaging + photographe + demenagementVente + mainleveeHypothecaire;
+
+    const capitalRestantDu = parseFloat(b.capitalRestantDu) || 0;
+    const indemnitesRemboursementAnticipe = parseFloat(b.indemnitesRemboursementAnticipe) || 0;
+    d.totalCreditExistant = capitalRestantDu + indemnitesRemboursementAnticipe;
+
+    const prixVenteEstime = parseFloat(b.prixVenteEstime) || 0;
+    const exonerationRP = !!b.exonerationRP;
+    const impotsEstimesVente = parseFloat(b.impotsEstimesVente) || 0;
+    const impotsEffectifs = exonerationRP ? 0 : impotsEstimesVente;
+
+    d.cashDisponibleApresRemboursement = prixVenteEstime - d.totalCreditExistant;
+    d.netVendeur = prixVenteEstime - d.totalFraisVente - d.totalCreditExistant - impotsEffectifs;
+    d.coutTotalVente = d.totalFraisVente + d.totalCreditExistant;
+    d.pctFraisSurPrix = prixVenteEstime > 0 ? (d.totalFraisVente / prixVenteEstime) * 100 : 0;
+  }
+
+  if (family === "investissement") {
+    const travauxImmediats = parseFloat(b.travauxImmediats) || 0;
+    const travauxDifferes = parseFloat(b.travauxDifferes) || 0;
+    const ameublementEquipement = parseFloat(b.ameublementEquipement) || 0;
+    d.totalTravauxInvest = travauxImmediats + travauxDifferes + ameublementEquipement;
+
+    const loyerMensuel = parseFloat(b.loyerMensuel) || 0;
+    const chargesRecuperables = parseFloat(b.chargesRecuperables) || 0;
+    const autresRevenus = parseFloat(b.autresRevenus) || 0;
+    const vacanceLocativeEstimee = parseFloat(b.vacanceLocativeEstimee) || 0;
+    d.loyerEffectif = (loyerMensuel + chargesRecuperables + autresRevenus) * (1 - vacanceLocativeEstimee / 100);
+
+    const chargesCoproNonRecuperables = parseFloat(b.chargesCoproNonRecuperables) || 0;
+    const taxeFonciereInvest = parseFloat(b.taxeFonciereInvest) || 0;
+    const assurancePNO = parseFloat(b.assurancePNO) || 0;
+    const assuranceGLI = parseFloat(b.assuranceGLI) || 0;
+    const gestionLocativePct = parseFloat(b.gestionLocativePct) || 0;
+    const entretienProvision = parseFloat(b.entretienProvision) || 0;
+    const gestionLocativeCout = d.loyerEffectif * (gestionLocativePct / 100);
+    d.totalChargesInvest = chargesCoproNonRecuperables + taxeFonciereInvest / 12 + assurancePNO + assuranceGLI + gestionLocativeCout + entretienProvision;
+
+    const impotEstimeInvest = parseFloat(b.impotEstimeInvest) || 0;
+
+    d.rendementBrut = prixAchat > 0 ? (loyerMensuel * 12 / prixAchat) * 100 : 0;
+    d.rendementNet = d.totalAcquisition > 0 ? ((loyerMensuel * 12 - d.totalChargesInvest * 12) / d.totalAcquisition) * 100 : 0;
+    d.cashflowMensuel = d.loyerEffectif - d.totalChargesInvest - d.mensualiteHorsAssurance - assuranceEmprunteur - impotEstimeInvest / 12;
+    d.cashflowAnnuel = d.cashflowMensuel * 12;
+    d.effortEpargneMensuel = d.cashflowMensuel < 0 ? -d.cashflowMensuel : 0;
+    d.seuilRentabilite = d.totalChargesInvest + d.mensualiteHorsAssurance + assuranceEmprunteur;
+  }
+
+  if (family === "vente-achat") {
+    d.netVendeurReprise = d.netVendeur;
+    d.capitalRestantDuReprise = parseFloat(b.capitalRestantDu) || 0;
+    d.cashDisponibleApresVente = d.netVendeur;
+    d.apportUtiliseReprise = apportPersonnel;
+
+    const fraisDoubleResidence = parseFloat(b.fraisDoubleResidence) || 0;
+    const fraisDemenagementTransition = parseFloat(b.fraisDemenagementTransition) || 0;
+    const pretRelaisActif = !!b.pretRelaisActif;
+    const pretRelaisMontant = parseFloat(b.pretRelaisMontant) || 0;
+    const pretRelaisTaux = parseFloat(b.pretRelaisTaux) || 0;
+    const pretRelaisDureeMois = parseFloat(b.pretRelaisDureeMois) || 0;
+    d.interetsPretRelais = pretRelaisActif ? pretRelaisMontant * (pretRelaisTaux / 100) * (pretRelaisDureeMois / 12) : 0;
+
+    d.cashNecessairePourAchat = apportPersonnel + fraisDoubleResidence + fraisDemenagementTransition;
+    d.epargneConservee = d.cashDisponibleApresVente - apportPersonnel;
+    d.ecartAFinancer = d.cashNecessairePourAchat - d.cashDisponibleApresVente - (pretRelaisActif ? pretRelaisMontant : 0);
+    d.epargneRestanteApresOperation = d.cashDisponibleApresVente + (pretRelaisActif ? pretRelaisMontant : 0) - d.cashNecessairePourAchat;
+    d.pctApportCouverture = d.cashNecessairePourAchat > 0 ? (d.cashDisponibleApresVente / d.cashNecessairePourAchat) * 100 : 0;
+  }
+
+  if (family === "achat") {
+    d.budgetTotal = apportPersonnel + montantEmprunte;
+    d.dejaEngage = d.coutTotalProjet;
+    d.resteDisponible = d.tresorerieRestanteApresAcquisition;
+  } else if (family === "vente") {
+    d.budgetTotal = parseFloat(b.prixVenteEstime) || 0;
+    d.dejaEngage = d.coutTotalVente + (b.exonerationRP ? 0 : (parseFloat(b.impotsEstimesVente) || 0));
+    d.resteDisponible = d.netVendeur;
+  } else if (family === "investissement") {
+    d.budgetTotal = apportPersonnel + montantEmprunte;
+    d.dejaEngage = d.totalAcquisition + d.totalTravauxInvest;
+    d.resteDisponible = d.budgetTotal - d.dejaEngage;
+  } else if (family === "vente-achat") {
+    d.budgetTotal = d.cashDisponibleApresVente + montantEmprunte + (b.pretRelaisActif ? (parseFloat(b.pretRelaisMontant) || 0) : 0);
+    d.dejaEngage = d.coutTotalProjet + d.coutTotalVente;
+    d.resteDisponible = d.epargneRestanteApresOperation;
+  }
+
+  return d;
+}
+
+function getBudgetAlert(family, b, d) {
+  if (family === "vente-achat" && (parseFloat(b.seuilEpargneMin) || 0) > 0) {
+    const seuil = parseFloat(b.seuilEpargneMin);
+    const reste = d.epargneRestanteApresOperation;
+    if (reste < seuil) return { level: "danger", label: "Sous le seuil de sécurité" };
+    if (reste < seuil * 1.5) return { level: "warning", label: "Proche du seuil de sécurité" };
+    return { level: "ok", label: "Au-dessus du seuil de sécurité" };
+  }
+  if (d.budgetTotal > 0) {
+    const pct = (d.resteDisponible / d.budgetTotal) * 100;
+    if (d.resteDisponible < 0) return { level: "danger", label: "Dépassement de budget" };
+    if (pct < 10) return { level: "warning", label: "Marge faible (< 10%)" };
+    return { level: "ok", label: "Budget maîtrisé" };
+  }
+  return { level: "neutral", label: "Renseignez votre budget" };
+}
+
+function getBudgetIndicators(family, d) {
+  if (family === "achat") {
+    return [
+      { label: "Coût total du projet", value: fmt(d.coutTotalProjet) },
+      { label: "Trésorerie restante après acquisition", value: fmt(d.tresorerieRestanteApresAcquisition) },
+      { label: "Coût mensuel réel du logement", value: `${fmt(d.coutMensuelReelLogement)}/mois` },
+      { label: "Épargne restante", value: fmt(d.epargneRestante), alert: d.epargneRestante < 10000 },
+    ];
+  }
+  if (family === "vente") {
+    return [
+      { label: "Net vendeur", value: fmt(d.netVendeur) },
+      { label: "Cash disponible après remboursement", value: fmt(d.cashDisponibleApresRemboursement) },
+      { label: "Coût total de la vente", value: fmt(d.coutTotalVente) },
+      { label: "% de frais / prix de vente", value: fmtPct(d.pctFraisSurPrix) },
+    ];
+  }
+  if (family === "investissement") {
+    return [
+      { label: "Rendement brut", value: fmtPct(d.rendementBrut) },
+      { label: "Rendement net", value: fmtPct(d.rendementNet) },
+      { label: "Cash-flow mensuel", value: fmt(d.cashflowMensuel), alert: d.cashflowMensuel < 0 },
+      { label: "Cash-flow annuel", value: fmt(d.cashflowAnnuel) },
+      { label: "Effort d'épargne mensuel", value: fmt(d.effortEpargneMensuel) },
+      { label: "Seuil de rentabilité", value: `${fmt(d.seuilRentabilite)}/mois` },
+    ];
+  }
+  if (family === "vente-achat") {
+    return [
+      { label: "💰 Cash disponible après vente", value: fmt(d.cashDisponibleApresVente) },
+      { label: "🏡 Cash nécessaire pour l'achat", value: fmt(d.cashNecessairePourAchat) },
+      { label: "↔️ Écart à financer", value: fmt(d.ecartAFinancer), alert: d.ecartAFinancer > 0 },
+      { label: "🛟 Épargne restante après l'opération", value: fmt(d.epargneRestanteApresOperation) },
+      { label: "📊 Couverture apport", value: `Votre apport couvre ${fmtPct(d.pctApportCouverture)} de votre nouveau projet` },
+    ];
+  }
+  return [];
+}
+
 // ─── COMPARATEUR DE BIENS — CALCULS ────────────────────────────────────────────
 function effectivePrice(b) {
   const v = b.prixNegocie || b.prixAffiche || b.prixAchat;
@@ -1310,76 +1703,123 @@ async function generateProjectPDF(project) {
   // ── Budget ──
   sectionTitle("Budget");
   const b = project.budget || {};
+  const budgetFamily = getBudgetFamily(project.type);
 
-  const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
-  const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
-  const budgetTotal = apportPersonnel + capaciteEmprunt;
+  if (budgetFamily === "generic") {
+    const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+    const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
+    const budgetTotal = apportPersonnel + capaciteEmprunt;
 
-  const prixAchat = parseFloat(b.prixAchat) || 0;
-  const neuf = !!b.neuf;
-  const fraisNotaire = calcNotaire(prixAchat, neuf);
-  const fraisAgence = parseFloat(b.fraisAgence) || 0;
-  const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
-  const fraisCourtier = parseFloat(b.fraisCourtier) || 0;
-  const totalAcquisition = prixAchat + fraisNotaire + fraisAgence + fraisDossierBancaire + fraisCourtier;
+    const prixAchat = parseFloat(b.prixAchat) || 0;
+    const neuf = !!b.neuf;
+    const fraisNotaire = calcNotaire(prixAchat, neuf);
+    const fraisAgence = parseFloat(b.fraisAgence) || 0;
+    const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
+    const fraisCourtier = parseFloat(b.fraisCourtier) || 0;
+    const totalAcquisition = prixAchat + fraisNotaire + fraisAgence + fraisDossierBancaire + fraisCourtier;
 
-  const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
-  const cuisineElectromenager = parseFloat(b.cuisineElectromenager) || 0;
-  const mobilier = parseFloat(b.mobilier) || 0;
-  const decoration = parseFloat(b.decoration) || 0;
-  const totalInstallation = budgetTravaux + cuisineElectromenager + mobilier + decoration;
+    const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
+    const cuisineElectromenager = parseFloat(b.cuisineElectromenager) || 0;
+    const mobilier = parseFloat(b.mobilier) || 0;
+    const decoration = parseFloat(b.decoration) || 0;
+    const totalInstallation = budgetTravaux + cuisineElectromenager + mobilier + decoration;
 
-  const chargesCopro = parseFloat(b.chargesCopro) || 0;
-  const taxeFonciereBudget = parseFloat(b.taxeFonciere) || 0;
-  const assuranceHabitation = parseFloat(b.assuranceHabitation) || 0;
-  const canComputeMensualite = apportPersonnel > 0 && capaciteEmprunt > 0 && prixAchat > 0;
-  const capitalEmprunte = Math.max(0, prixAchat - apportPersonnel);
-  const mensualiteCredit = canComputeMensualite ? calcMensualite(capitalEmprunte, 25, 3.5) : 0;
-  const totalMensuel = chargesCopro + taxeFonciereBudget / 12 + assuranceHabitation + mensualiteCredit;
+    const chargesCopro = parseFloat(b.chargesCopro) || 0;
+    const taxeFonciereBudget = parseFloat(b.taxeFonciere) || 0;
+    const assuranceHabitation = parseFloat(b.assuranceHabitation) || 0;
+    const canComputeMensualite = apportPersonnel > 0 && capaciteEmprunt > 0 && prixAchat > 0;
+    const capitalEmprunte = Math.max(0, prixAchat - apportPersonnel);
+    const mensualiteCredit = canComputeMensualite ? calcMensualite(capitalEmprunte, 25, 3.5) : 0;
+    const totalMensuel = chargesCopro + taxeFonciereBudget / 12 + assuranceHabitation + mensualiteCredit;
 
-  const resteDisponible = budgetTotal - totalAcquisition - totalInstallation;
-  const restePct = budgetTotal > 0 ? (resteDisponible / budgetTotal) * 100 : null;
+    const resteDisponible = budgetTotal - totalAcquisition - totalInstallation;
+    const restePct = budgetTotal > 0 ? (resteDisponible / budgetTotal) * 100 : null;
 
-  if (budgetTotal === 0 && totalAcquisition === 0 && totalInstallation === 0) {
-    line("Aucune information budgétaire renseignée.", { color: [148, 163, 184] });
+    if (budgetTotal === 0 && totalAcquisition === 0 && totalInstallation === 0) {
+      line("Aucune information budgétaire renseignée.", { color: [148, 163, 184] });
+    } else {
+      line("Financement", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      if (apportPersonnel > 0) line(`Apport personnel : ${pdfAmount(apportPersonnel)}`, { indent: 4 });
+      if (capaciteEmprunt > 0) line(`Capacité d'emprunt estimée : ${pdfAmount(capaciteEmprunt)}`, { indent: 4 });
+      line(`Budget total : ${pdfAmount(budgetTotal)}`, { bold: true, indent: 4 });
+      y += 2;
+
+      line("Coûts d'acquisition", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      if (prixAchat > 0) line(`Prix d'achat : ${pdfAmount(prixAchat)}`, { indent: 4 });
+      if (prixAchat > 0) line(`Frais de notaire : ${pdfAmount(fraisNotaire)}`, { indent: 4 });
+      if (fraisAgence > 0) line(`Frais d'agence : ${pdfAmount(fraisAgence)}`, { indent: 4 });
+      if (fraisDossierBancaire > 0) line(`Frais de dossier bancaire : ${pdfAmount(fraisDossierBancaire)}`, { indent: 4 });
+      if (fraisCourtier > 0) line(`Frais de courtier : ${pdfAmount(fraisCourtier)}`, { indent: 4 });
+      line(`Total acquisition : ${pdfAmount(totalAcquisition)}`, { bold: true, indent: 4 });
+      y += 2;
+
+      line("Coûts d'installation", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      if (budgetTravaux > 0) line(`Budget travaux : ${pdfAmount(budgetTravaux)}`, { indent: 4 });
+      if (cuisineElectromenager > 0) line(`Cuisine / électroménager : ${pdfAmount(cuisineElectromenager)}`, { indent: 4 });
+      if (mobilier > 0) line(`Mobilier : ${pdfAmount(mobilier)}`, { indent: 4 });
+      if (decoration > 0) line(`Décoration : ${pdfAmount(decoration)}`, { indent: 4 });
+      line(`Total installation : ${pdfAmount(totalInstallation)}`, { bold: true, indent: 4 });
+      y += 2;
+
+      line("Coûts récurrents", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      if (chargesCopro > 0) line(`Charges de copropriété : ${pdfAmount(chargesCopro)}/mois`, { indent: 4 });
+      if (taxeFonciereBudget > 0) line(`Taxe foncière : ${pdfAmount(taxeFonciereBudget)}/an`, { indent: 4 });
+      if (assuranceHabitation > 0) line(`Assurance habitation : ${pdfAmount(assuranceHabitation)}/mois`, { indent: 4 });
+      if (canComputeMensualite) line(`Mensualité crédit estimée : ${pdfAmount(mensualiteCredit)}/mois`, { indent: 4 });
+      line(`Total mensuel : ${pdfAmount(totalMensuel)}/mois`, { bold: true, indent: 4 });
+      y += 3;
+
+      line("Récapitulatif", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      line(`Budget total : ${pdfAmount(budgetTotal)}`, { indent: 4 });
+      line(`- Total acquisition : ${pdfAmount(totalAcquisition)}`, { indent: 4 });
+      line(`- Total installation : ${pdfAmount(totalInstallation)}`, { indent: 4 });
+      const recapColorPdf = resteDisponible < 0 ? [185, 28, 28] : (restePct != null && restePct <= 10 ? [180, 83, 9] : [4, 120, 87]);
+      line(`= Reste disponible : ${pdfAmount(resteDisponible)}`, { bold: true, size: 11, color: recapColorPdf, indent: 4 });
+    }
   } else {
-    line("Financement", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
-    if (apportPersonnel > 0) line(`Apport personnel : ${pdfAmount(apportPersonnel)}`, { indent: 4 });
-    if (capaciteEmprunt > 0) line(`Capacité d'emprunt estimée : ${pdfAmount(capaciteEmprunt)}`, { indent: 4 });
-    line(`Budget total : ${pdfAmount(budgetTotal)}`, { bold: true, indent: 4 });
+    const pdfFieldValue = (value, suffix) => {
+      if (suffix === "%") return fmtPct(value);
+      if (suffix === "€/mois") return `${pdfAmount(value)}/mois`;
+      if (suffix === "€/an") return `${pdfAmount(value)}/an`;
+      return pdfAmount(value);
+    };
+
+    const derived = computeBudgetDerived(budgetFamily, b);
+    const alert = getBudgetAlert(budgetFamily, b, derived);
+
+    line(`Budget total : ${pdfAmount(derived.budgetTotal)}`, { bold: true, gap: 6 });
+    line(`Déjà engagé : ${pdfAmount(derived.dejaEngage)}`, { indent: 4 });
+    const resteColorPdf = derived.resteDisponible < 0 ? [185, 28, 28] : [4, 120, 87];
+    line(`Reste disponible : ${pdfAmount(derived.resteDisponible)}`, { bold: true, indent: 4, color: resteColorPdf });
+    const alertColorPdf = alert.level === "danger" ? [185, 28, 28] : alert.level === "warning" ? [180, 83, 9] : [71, 85, 105];
+    line(`Alerte : ${alert.label}`, { indent: 4, color: alertColorPdf });
     y += 2;
 
-    line("Coûts d'acquisition", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
-    if (prixAchat > 0) line(`Prix d'achat : ${pdfAmount(prixAchat)}`, { indent: 4 });
-    if (prixAchat > 0) line(`Frais de notaire : ${pdfAmount(fraisNotaire)}`, { indent: 4 });
-    if (fraisAgence > 0) line(`Frais d'agence : ${pdfAmount(fraisAgence)}`, { indent: 4 });
-    if (fraisDossierBancaire > 0) line(`Frais de dossier bancaire : ${pdfAmount(fraisDossierBancaire)}`, { indent: 4 });
-    if (fraisCourtier > 0) line(`Frais de courtier : ${pdfAmount(fraisCourtier)}`, { indent: 4 });
-    line(`Total acquisition : ${pdfAmount(totalAcquisition)}`, { bold: true, indent: 4 });
-    y += 2;
+    (BUDGET_SCHEMA[budgetFamily] || []).forEach(id => {
+      const section = BUDGET_SECTIONS[id];
+      line(section.title, { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      section.fields.forEach(f => {
+        if (f.type === "computed") {
+          line(`${f.label} : ${pdfFieldValue(derived[f.key], f.suffix)}`, { indent: 4, bold: true });
+        } else if (f.type === "checkbox") {
+          if (b[f.key]) line(`${f.label} : Oui`, { indent: 4 });
+        } else if (f.type === "select") {
+          const opt = f.options.find(o => o.value === b[f.key]);
+          if (opt) line(`${f.label} : ${opt.label}`, { indent: 4 });
+        } else {
+          const v = parseFloat(b[f.key]) || 0;
+          if (v > 0) line(`${f.label} : ${pdfFieldValue(v, f.suffix)}`, { indent: 4 });
+        }
+      });
+      y += 2;
+    });
 
-    line("Coûts d'installation", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
-    if (budgetTravaux > 0) line(`Budget travaux : ${pdfAmount(budgetTravaux)}`, { indent: 4 });
-    if (cuisineElectromenager > 0) line(`Cuisine / électroménager : ${pdfAmount(cuisineElectromenager)}`, { indent: 4 });
-    if (mobilier > 0) line(`Mobilier : ${pdfAmount(mobilier)}`, { indent: 4 });
-    if (decoration > 0) line(`Décoration : ${pdfAmount(decoration)}`, { indent: 4 });
-    line(`Total installation : ${pdfAmount(totalInstallation)}`, { bold: true, indent: 4 });
-    y += 2;
-
-    line("Coûts récurrents", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
-    if (chargesCopro > 0) line(`Charges de copropriété : ${pdfAmount(chargesCopro)}/mois`, { indent: 4 });
-    if (taxeFonciereBudget > 0) line(`Taxe foncière : ${pdfAmount(taxeFonciereBudget)}/an`, { indent: 4 });
-    if (assuranceHabitation > 0) line(`Assurance habitation : ${pdfAmount(assuranceHabitation)}/mois`, { indent: 4 });
-    if (canComputeMensualite) line(`Mensualité crédit estimée : ${pdfAmount(mensualiteCredit)}/mois`, { indent: 4 });
-    line(`Total mensuel : ${pdfAmount(totalMensuel)}/mois`, { bold: true, indent: 4 });
-    y += 3;
-
-    line("Récapitulatif", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
-    line(`Budget total : ${pdfAmount(budgetTotal)}`, { indent: 4 });
-    line(`- Total acquisition : ${pdfAmount(totalAcquisition)}`, { indent: 4 });
-    line(`- Total installation : ${pdfAmount(totalInstallation)}`, { indent: 4 });
-    const recapColorPdf = resteDisponible < 0 ? [185, 28, 28] : (restePct != null && restePct <= 10 ? [180, 83, 9] : [4, 120, 87]);
-    line(`= Reste disponible : ${pdfAmount(resteDisponible)}`, { bold: true, size: 11, color: recapColorPdf, indent: 4 });
+    const indicators = getBudgetIndicators(budgetFamily, derived);
+    if (indicators.length > 0) {
+      line("Indicateurs", { bold: true, size: 11, color: [51, 65, 85], gap: 6 });
+      // Helvetica/WinAnsi ne sait pas afficher les emoji (mêmes limites que pdfAmount) — on les retire des libellés.
+      indicators.forEach(ind => line(`${ind.label.replace(/^\p{Extended_Pictographic}️?\s*/u, "")} : ${ind.value}`, { indent: 4 }));
+    }
   }
 
   // ── Contacts ──
@@ -2066,7 +2506,9 @@ function InspirationsScreen({ inspirations, projects, onBack, onSave, onDelete }
   );
 }
 
-function BudgetTab({ project, onUpdate }) {
+// Budget générique à 4 sections, conservé pour les types sans moteur dédié
+// (Construction, Travaux, Rénovation énergétique, Location, Mise en location, SCI, LMNP).
+function GenericBudgetTab({ project, onUpdate }) {
   const b = project.budget || {};
   const set = (k, v) => onUpdate(p => ({ ...p, budget: { ...(p.budget || {}), [k]: v } }));
 
@@ -2195,6 +2637,141 @@ function BudgetTab({ project, onUpdate }) {
           )}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function BudgetTopIndicators({ budgetTotal, dejaEngage, resteDisponible, alert }) {
+  const ALERT_COLORS = {
+    danger: { bg: "#fee2e2", color: "#b91c1c" },
+    warning: { bg: "#fef3c7", color: "#b45309" },
+    ok: { bg: "#d1fae5", color: "#047857" },
+    neutral: { bg: "#f8f7f5", color: "#64748b" },
+  };
+  const ac = ALERT_COLORS[alert.level];
+  const cardStyle = { border: "0.5px solid #e5e3df", background: "white" };
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+        <div className="text-xs text-slate-400 mb-1">💰 Budget total</div>
+        <div className="text-lg font-bold text-slate-800 truncate">{fmt(budgetTotal)}</div>
+      </div>
+      <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+        <div className="text-xs text-slate-400 mb-1">💸 Déjà engagé</div>
+        <div className="text-lg font-bold text-slate-800 truncate">{fmt(dejaEngage)}</div>
+      </div>
+      <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+        <div className="text-xs text-slate-400 mb-1">📋 Reste disponible</div>
+        <div className="text-lg font-bold truncate" style={{ color: resteDisponible < 0 ? "#b91c1c" : "#1a1a2e" }}>{fmt(resteDisponible)}</div>
+      </div>
+      <div className="rounded-2xl shadow-sm p-4" style={{ background: ac.bg, border: `0.5px solid ${ac.color}33` }}>
+        <div className="text-xs mb-1" style={{ color: ac.color }}>⚠️ Alerte</div>
+        <div className="text-sm font-bold truncate" style={{ color: ac.color }}>{alert.label}</div>
+      </div>
+    </div>
+  );
+}
+
+function BudgetSectionCard({ section, budget, derived, open, onToggle, onSet }) {
+  return (
+    <Card>
+      <button onClick={onToggle} className="w-full flex items-center justify-between text-left">
+        <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+          <span>{section.icon}</span> {section.title}
+        </h3>
+        <span className="text-slate-400 text-xs flex-shrink-0">{open ? "▲ Réduire" : "▼ Déplier"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-4 mt-4 pt-4 border-t border-slate-100">
+          {section.fields.map(f => {
+            if (f.type === "computed") {
+              return (
+                <Stat key={f.key} label={f.label} value={formatFieldValue(derived[f.key], f.suffix)}
+                  sub={typeof f.sub === "function" ? f.sub(budget, derived) : f.sub} accent="text-blue-600" />
+              );
+            }
+            if (f.type === "checkbox") {
+              return (
+                <label key={f.key} className="flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={!!budget[f.key]} onChange={e => onSet(f.key, e.target.checked)} />
+                  {f.label}
+                </label>
+              );
+            }
+            if (f.type === "select") {
+              return (
+                <Select key={f.key} label={f.label} value={budget[f.key] || f.options[0].value}
+                  onChange={v => onSet(f.key, v)} options={f.options} />
+              );
+            }
+            return (
+              <Input key={f.key} label={f.label} value={budget[f.key] || ""} onChange={v => onSet(f.key, v)}
+                type="number" suffix={f.suffix} hint={f.hint} placeholder={f.placeholder} />
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function BudgetTab({ project, onUpdate }) {
+  const family = getBudgetFamily(project.type);
+  const [openSections, setOpenSections] = useState({});
+
+  if (family === "generic") {
+    return <GenericBudgetTab project={project} onUpdate={onUpdate} />;
+  }
+
+  const b = project.budget || {};
+  const set = (k, v) => onUpdate(p => ({ ...p, budget: { ...(p.budget || {}), [k]: v } }));
+  const toggleSection = (id, defaultOpen) => {
+    setOpenSections(prev => ({ ...prev, [id]: !(prev[id] ?? defaultOpen) }));
+  };
+
+  const derived = computeBudgetDerived(family, b);
+  const alert = getBudgetAlert(family, b, derived);
+  const indicators = getBudgetIndicators(family, derived);
+  const sectionIds = BUDGET_SCHEMA[family] || [];
+
+  return (
+    <div className="flex flex-col gap-4">
+      <BudgetTopIndicators
+        budgetTotal={derived.budgetTotal}
+        dejaEngage={derived.dejaEngage}
+        resteDisponible={derived.resteDisponible}
+        alert={alert}
+      />
+
+      {sectionIds.map(id => {
+        const section = BUDGET_SECTIONS[id];
+        const isOpen = openSections[id] ?? section.defaultOpen;
+        return (
+          <BudgetSectionCard
+            key={id}
+            section={section}
+            budget={b}
+            derived={derived}
+            open={isOpen}
+            onToggle={() => toggleSection(id, section.defaultOpen)}
+            onSet={set}
+          />
+        );
+      })}
+
+      {indicators.length > 0 && (
+        <Card>
+          <h3 className="font-bold text-slate-700 mb-4">Indicateurs</h3>
+          <div className="flex flex-col gap-3">
+            {indicators.map((ind, i) => (
+              <div key={i} className="flex justify-between items-center gap-3 text-sm">
+                <span className="text-slate-500">{ind.label}</span>
+                <span className={`font-semibold text-right ${ind.alert ? "text-red-600" : "text-slate-800"}`}>{ind.value}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
