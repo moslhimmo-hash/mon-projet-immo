@@ -962,6 +962,21 @@ function checkDeadlineNotifications(projects) {
   return { changed, projects: next };
 }
 
+// Représente une étape personnalisée sous la même forme qu'une étape STEPS_BY_TYPE,
+// pour qu'elle se mélange naturellement aux calculs de progression et à "Prochaine action".
+function mapCustomStep(cs) {
+  return { id: cs.id, label: cs.label, importance: cs.importance, phase: cs.phaseKey, month: null, info: null, custom: true };
+}
+
+// Nombre d'étapes cochées / total, étapes personnalisées comprises.
+function getProjectStepCount(project) {
+  const steps = STEPS_BY_TYPE[project.type] || [];
+  const customs = (project.customSteps || []).map(mapCustomStep);
+  const all = [...steps, ...customs];
+  const done = all.filter(s => project.checklist[s.id]).length;
+  return { done, total: all.length };
+}
+
 const fmtPct = n => isNaN(n) || !isFinite(n) ? "—" : n.toFixed(2) + " %";
 
 function calcMensualite(capital, duree, taux) {
@@ -1093,10 +1108,11 @@ function investisseurRows(biens) {
 
 function buildAISystemPrompt(project) {
   const steps = STEPS_BY_TYPE[project.type] || [];
-  const done = steps.filter(s => project.checklist[s.id]).length;
-  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const allSteps = [...steps, ...(project.customSteps || []).map(mapCustomStep)];
+  const done = allSteps.filter(s => project.checklist[s.id]).length;
+  const pct = allSteps.length ? Math.round((done / allSteps.length) * 100) : 0;
   const typeLabel = PROJECT_TYPES.find(t => t.id === project.type)?.label || project.type;
-  const nextStep = steps.find(s => !project.checklist[s.id]);
+  const nextStep = allSteps.find(s => !project.checklist[s.id]);
 
   const b = project.budget || {};
   const budgetTotal = (parseFloat(b.apportPersonnel) || 0) + (parseFloat(b.capaciteEmprunt) || 0);
@@ -1107,7 +1123,7 @@ function buildAISystemPrompt(project) {
 
   return `Tu es un assistant immobilier expert intégré dans Cozimo.
 L'utilisateur a un projet de type ${typeLabel}.
-Il en est à ${pct}% de son projet (${done}/${steps.length} étapes cochées).
+Il en est à ${pct}% de son projet (${done}/${allSteps.length} étapes cochées).
 Sa prochaine étape est : ${nextStep ? nextStep.label : "toutes les étapes sont complétées"}.
 Son budget est : ${budgetLine}.
 Réponds de façon concise, pratique et bienveillante en français.`;
@@ -1228,12 +1244,12 @@ async function generateProjectPDF(project) {
   y += 12;
 
   const steps = STEPS_BY_TYPE[project.type] || [];
-  const done = steps.filter(s => project.checklist[s.id]).length;
-  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const { done, total } = getProjectStepCount(project);
+  const pct = total ? Math.round((done / total) * 100) : 0;
   const typeLabel = PROJECT_TYPES.find(t => t.id === project.type)?.label || project.type;
 
   line(project.name, { bold: true, size: 16, color: [26, 26, 46], gap: 7 });
-  line(`${typeLabel} — ${pct}% complété (${done}/${steps.length} étapes)`, { size: 11, color: [71, 85, 105], gap: 9 });
+  line(`${typeLabel} — ${pct}% complété (${done}/${total} étapes)`, { size: 11, color: [71, 85, 105], gap: 9 });
 
   // ── Étapes ──
   sectionTitle("Étapes");
@@ -1798,9 +1814,8 @@ function NewProjectDetailsScreen({ type, onCreate, onBack }) {
 }
 
 function ProjectCard({ project, onOpen }) {
-  const steps = STEPS_BY_TYPE[project.type] || [];
-  const done = steps.filter(s => project.checklist[s.id]).length;
-  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+  const { done, total } = getProjectStepCount(project);
+  const pct = total ? Math.round((done / total) * 100) : 0;
   const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
   return (
     <button onClick={() => onOpen(project.id)} className="text-left w-full">
@@ -1817,7 +1832,7 @@ function ProjectCard({ project, onOpen }) {
           </div>
           <span className="text-xs font-semibold text-blue-600 flex-shrink-0">{pct}%</span>
         </div>
-        <ProgressBar value={done} max={steps.length} />
+        <ProgressBar value={done} max={total} />
       </Card>
     </button>
   );
@@ -2496,14 +2511,12 @@ function Dashboard({ project, onUpdate, onBack }) {
   };
 
   const steps = STEPS_BY_TYPE[project.type] || [];
-  const done = steps.filter(s => project.checklist[s.id]).length;
-  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
   const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
-  const nextStep = steps.find(s => !project.checklist[s.id]);
   const tabs = BIENS_ENABLED_TYPES.includes(project.type)
     ? [DASHBOARD_TABS_BASE[0], BIENS_TAB, ...DASHBOARD_TABS_BASE.slice(1)]
     : DASHBOARD_TABS_BASE;
 
+  // Phases affichées dans l'onglet Accueil, étapes personnalisées incluses dans leur phase.
   const phases = {};
   steps.forEach(s => {
     const key = s.tag ? `${s.tag} — ${s.phase}` : s.phase;
@@ -2512,8 +2525,14 @@ function Dashboard({ project, onUpdate, onBack }) {
   });
   (project.customSteps || []).forEach(cs => {
     if (!phases[cs.phaseKey]) phases[cs.phaseKey] = [];
-    phases[cs.phaseKey].push({ id: cs.id, label: cs.label, importance: cs.importance, phase: cs.phaseKey, month: null, info: null, custom: true });
+    phases[cs.phaseKey].push(mapCustomStep(cs));
   });
+
+  // Liste combinée (ordre d'affichage) utilisée pour la progression globale et "Prochaine action".
+  const allSteps = Object.values(phases).flat();
+  const done = allSteps.filter(s => project.checklist[s.id]).length;
+  const pct = allSteps.length ? Math.round((done / allSteps.length) * 100) : 0;
+  const nextStep = allSteps.find(s => !project.checklist[s.id]);
 
   const upcomingDeadlines = steps
     .filter(s => project.deadlines?.[s.id] && !project.checklist[s.id])
@@ -2608,9 +2627,9 @@ function Dashboard({ project, onUpdate, onBack }) {
           </div>
           <div className="mb-2 flex justify-between text-sm">
             <span className="text-slate-300">Progression</span>
-            <span className="text-white font-bold">{done}/{steps.length} étapes</span>
+            <span className="text-white font-bold">{done}/{allSteps.length} étapes</span>
           </div>
-          <ProgressBar value={done} max={steps.length} color="#3b82f6" />
+          <ProgressBar value={done} max={allSteps.length} color="#3b82f6" />
           <div className="mt-2 text-right text-xs text-blue-300 font-semibold">{pct}% complété</div>
         </div>
       </div>
@@ -2643,7 +2662,7 @@ function Dashboard({ project, onUpdate, onBack }) {
                         style={{ background: IMPORTANCE[nextStep.importance]?.bg, color: IMPORTANCE[nextStep.importance]?.color }}>
                         {IMPORTANCE[nextStep.importance]?.label}
                       </span>
-                      <span className="text-xs text-slate-400">{nextStep.phase} · {nextStep.month}</span>
+                      <span className="text-xs text-slate-400">{nextStep.phase}{nextStep.month ? ` · ${nextStep.month}` : ""}</span>
                     </div>
                     <div className="text-sm font-semibold text-slate-800">{nextStep.label}</div>
                   </div>
