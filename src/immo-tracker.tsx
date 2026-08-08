@@ -2534,7 +2534,7 @@ function Dashboard({ project, onUpdate, onBack }) {
   const pct = allSteps.length ? Math.round((done / allSteps.length) * 100) : 0;
   const nextStep = allSteps.find(s => !project.checklist[s.id]);
 
-  const upcomingDeadlines = steps
+  const upcomingDeadlines = allSteps
     .filter(s => project.deadlines?.[s.id] && !project.checklist[s.id])
     .map(s => ({ step: s, info: getDeadlineInfo(project.deadlines[s.id]) }))
     .sort((a, b) => a.info.diffDays - b.info.diffDays)
