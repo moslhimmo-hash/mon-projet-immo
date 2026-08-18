@@ -1878,10 +1878,11 @@ function CozimoLogo({ width = 160, height = 48, dark = false }) {
       <text x="0" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>C</text>
       <text x="26" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>o</text>
       <text x="52" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>z</text>
-      <circle cx="82" cy="12" r="7" stroke="#B94040" strokeWidth="3.5" fill="none" />
-      <rect x="79" y="19" width="6" height="20" rx="3" fill="#B94040" />
-      <rect x="79" y="29" width="10" height="4" rx="2" fill="#B94040" />
-      <rect x="79" y="35" width="7" height="4" rx="2" fill="#B94040" />
+      <path
+        d="M40 11 C33 11 27 17 27 24 C27 30 31 35 36 36.5 L36 60 C36 62 38 64 40 64 C42 64 44 62 44 60 L44 57 L48 57 L48 52 L44 52 L44 48 L49 48 L49 43 L44 43 L44 36.5 C49 35 53 30 53 24 C53 17 47 11 40 11 Z M40 17 C44 17 47 20 47 24 C47 28 44 31 40 31 C36 31 33 28 33 24 C33 20 36 17 40 17 Z"
+        fill="#B94040"
+        transform="translate(60.46 3.54) scale(0.5385)"
+      />
       <text x="93" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>m</text>
       <text x="131" y="38" fontFamily="Outfit, sans-serif" fontSize="40" fontWeight="600" fill={fill}>o</text>
     </svg>
