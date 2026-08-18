@@ -84,6 +84,13 @@ function projectColor(projects, projectId) {
   return PROJECT_COLORS[(idx >= 0 ? idx : 0) % PROJECT_COLORS.length];
 }
 
+const CONTACT_STATUSES = [
+  { value: "a_contacter", label: "À contacter", icon: "🟡", bg: "#fef3c7", color: "#92400e" },
+  { value: "en_discussion", label: "En discussion", icon: "🔵", bg: "#dbeafe", color: "#1e40af" },
+  { value: "valide", label: "Validé", icon: "🟢", bg: "#d1fae5", color: "#047857" },
+  { value: "ecarte", label: "Écarté", icon: "🔴", bg: "#fee2e2", color: "#b91c1c" },
+];
+
 const CONTACT_ROLES = [
   { value: "courtier", label: "Courtier" },
   { value: "notaire", label: "Notaire" },
@@ -1830,10 +1837,13 @@ async function generateProjectPDF(project) {
   } else {
     contacts.forEach(c => {
       const roleLabel = CONTACT_ROLES.find(r => r.value === c.role)?.label || "Autre";
+      const statusLabel = CONTACT_STATUSES.find(s => s.value === c.statut)?.label || CONTACT_STATUSES[0].label;
       line(`${c.nom || "Sans nom"} — ${roleLabel}`, { bold: true, gap: 6 });
+      line(`Statut : ${statusLabel}`, { indent: 4 });
+      if (c.note > 0) line(`Note : ${c.note}/5`, { indent: 4 });
       if (c.telephone) line(`Tél. : ${c.telephone}`, { indent: 4 });
       if (c.email) line(`Email : ${c.email}`, { indent: 4 });
-      if (c.notes) line(`Notes : ${c.notes}`, { indent: 4, color: [100, 116, 139] });
+      if (c.notes) line(`Mes notes : ${c.notes}`, { indent: 4, color: [100, 116, 139] });
       y += 2;
     });
   }
@@ -2193,6 +2203,23 @@ function Select({ label, value, onChange, options }) {
       >
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+    </div>
+  );
+}
+
+function StarRating({ value = 0, onChange }) {
+  return (
+    <div className="flex gap-0.5">
+      {[1, 2, 3, 4, 5].map(i => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => onChange(i === value ? 0 : i)}
+          className="text-base leading-none cursor-pointer hover:scale-110 transition-transform"
+        >
+          {i <= value ? "⭐" : "☆"}
+        </button>
+      ))}
     </div>
   );
 }
@@ -2776,20 +2803,33 @@ function BudgetTab({ project, onUpdate }) {
   );
 }
 
-function ContactCard({ contact, onDelete }) {
+function ContactCard({ contact, onDelete, onUpdate, onEdit }) {
   const roleLabel = CONTACT_ROLES.find(r => r.value === contact.role)?.label || "Autre";
+  const status = CONTACT_STATUSES.find(s => s.value === contact.statut) || CONTACT_STATUSES[0];
   return (
     <Card>
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div>
+        <div className="flex flex-col gap-1.5">
           <div className="font-bold text-slate-800 text-sm">{contact.nom}</div>
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">{roleLabel}</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">{roleLabel}</span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: status.bg, color: status.color }}>
+              {status.icon} {status.label}
+            </span>
+          </div>
         </div>
-        <button onClick={() => onDelete(contact.id)}
-          className="text-slate-300 hover:text-red-500 text-xs w-6 h-6 flex items-center justify-center flex-shrink-0 transition-all">
-          ✕
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button onClick={() => onEdit(contact)}
+            className="text-slate-300 hover:text-blue-600 text-xs w-6 h-6 flex items-center justify-center transition-all">
+            ✎
+          </button>
+          <button onClick={() => onDelete(contact.id)}
+            className="text-slate-300 hover:text-red-500 text-xs w-6 h-6 flex items-center justify-center transition-all">
+            ✕
+          </button>
+        </div>
       </div>
+      <StarRating value={contact.note || 0} onChange={n => onUpdate(contact.id, { note: n })} />
       <div className="flex flex-col gap-1.5 mt-2">
         {contact.telephone && (
           <a href={`tel:${contact.telephone}`} className="flex items-center gap-2 text-sm text-blue-600 hover:underline">
@@ -2807,22 +2847,47 @@ function ContactCard({ contact, onDelete }) {
   );
 }
 
-function ContactsTab({ project, onAdd, onDelete }) {
+const EMPTY_CONTACT_FORM = { nom: "", role: "courtier", telephone: "", email: "", notes: "", note: 0, statut: "a_contacter" };
+
+function ContactsTab({ project, onAdd, onDelete, onUpdate }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ nom: "", role: "courtier", telephone: "", email: "", notes: "" });
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY_CONTACT_FORM);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const contacts = project.contacts || [];
 
+  const startAdd = () => {
+    if (open) { cancel(); return; }
+    setEditingId(null);
+    setForm(EMPTY_CONTACT_FORM);
+    setOpen(true);
+  };
+
+  const startEdit = (contact) => {
+    setEditingId(contact.id);
+    setForm({ ...EMPTY_CONTACT_FORM, ...contact });
+    setOpen(true);
+  };
+
+  const cancel = () => {
+    setOpen(false);
+    setEditingId(null);
+    setForm(EMPTY_CONTACT_FORM);
+  };
+
   const submit = () => {
     if (!form.nom.trim()) return;
-    onAdd({ id: uid(), ...form });
-    setForm({ nom: "", role: "courtier", telephone: "", email: "", notes: "" });
-    setOpen(false);
+    if (editingId) {
+      onUpdate(editingId, form);
+    } else {
+      onAdd({ id: uid(), ...form });
+    }
+    cancel();
   };
 
   return (
     <div className="flex flex-col gap-4">
-      <button onClick={() => setOpen(o => !o)}
+      <button onClick={startAdd}
         className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
         {open ? "✕ Annuler" : "+ Ajouter un contact"}
       </button>
@@ -2831,12 +2896,18 @@ function ContactsTab({ project, onAdd, onDelete }) {
           <div className="flex flex-col gap-4">
             <Input label="Nom" value={form.nom} onChange={v => set("nom", v)} placeholder="Ex : Marie Dupont" />
             <Select label="Rôle" value={form.role} onChange={v => set("role", v)} options={CONTACT_ROLES} />
+            <Select label="Statut" value={form.statut} onChange={v => set("statut", v)}
+              options={CONTACT_STATUSES.map(s => ({ value: s.value, label: `${s.icon} ${s.label}` }))} />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Note</label>
+              <StarRating value={form.note} onChange={n => set("note", n)} />
+            </div>
             <Input label="Téléphone" value={form.telephone} onChange={v => set("telephone", v)} type="tel" placeholder="06 12 34 56 78" />
             <Input label="Email" value={form.email} onChange={v => set("email", v)} type="email" placeholder="marie@exemple.fr" />
-            <Input label="Notes" value={form.notes} onChange={v => set("notes", v)} placeholder="Optionnel" />
+            <Input label="Mes notes" value={form.notes} onChange={v => set("notes", v)} placeholder="Impressions, points clés, tarifs discutés..." />
             <button onClick={submit}
               className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold transition-all">
-              Enregistrer le contact
+              {editingId ? "Modifier le contact" : "Enregistrer le contact"}
             </button>
           </div>
         </Card>
@@ -2845,7 +2916,9 @@ function ContactsTab({ project, onAdd, onDelete }) {
         <p className="text-sm text-slate-400 text-center py-4">Aucun contact pour ce projet pour l'instant.</p>
       ) : (
         <div className="flex flex-col gap-3">
-          {contacts.map(c => <ContactCard key={c.id} contact={c} onDelete={onDelete} />)}
+          {contacts.map(c => (
+            <ContactCard key={c.id} contact={c} onDelete={onDelete} onUpdate={onUpdate} onEdit={startEdit} />
+          ))}
         </div>
       )}
     </div>
@@ -3319,6 +3392,7 @@ function Dashboard({ project, onUpdate, onBack }) {
   };
   const addContact = (contact) => onUpdate(p => ({ ...p, contacts: [...(p.contacts || []), contact] }));
   const deleteContact = (id) => onUpdate(p => ({ ...p, contacts: (p.contacts || []).filter(c => c.id !== id) }));
+  const updateContact = (id, patch) => onUpdate(p => ({ ...p, contacts: (p.contacts || []).map(c => (c.id === id ? { ...c, ...patch } : c)) }));
   const addJournalEntry = (entry) => onUpdate(p => ({ ...p, journal: [...(p.journal || []), entry] }));
 
   const openAddStepForm = (phaseKey) => {
@@ -3641,7 +3715,7 @@ function Dashboard({ project, onUpdate, onBack }) {
         )}
 
         {tab === "budget" && <BudgetTab project={project} onUpdate={onUpdate} />}
-        {tab === "contacts" && <ContactsTab project={project} onAdd={addContact} onDelete={deleteContact} />}
+        {tab === "contacts" && <ContactsTab project={project} onAdd={addContact} onDelete={deleteContact} onUpdate={updateContact} />}
         {tab === "journal" && <JournalTab project={project} onAdd={addJournalEntry} />}
         {tab === "biens" && <BiensTab project={project} onUpdate={onUpdate} />}
       </div>
