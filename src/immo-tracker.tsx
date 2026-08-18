@@ -2235,7 +2235,7 @@ function Stat({ label, value, sub, accent }) {
 }
 
 // ─── SCREENS ──────────────────────────────────────────────────────────────────
-function NewProjectTypeScreen({ onSelect, onBack }) {
+function NewProjectTypeScreen({ onSelect, onBack, onLegal }) {
   const isHome = !onBack;
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
@@ -2272,6 +2272,11 @@ function NewProjectTypeScreen({ onSelect, onBack }) {
               <div className="text-slate-400 text-xs mt-0.5">{t.desc}</div>
             </button>
           ))}
+        </div>
+        <div className="text-center mt-8">
+          <button onClick={onLegal} className="text-xs text-slate-500 hover:text-slate-300 transition-all">
+            Mentions légales
+          </button>
         </div>
       </div>
     </div>
@@ -2336,7 +2341,7 @@ function ProjectCard({ project, onOpen }) {
   );
 }
 
-function ProjectsScreen({ projects, onOpen, onCreate, onInspirations }) {
+function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal }) {
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
@@ -2369,6 +2374,51 @@ function ProjectsScreen({ projects, onOpen, onCreate, onInspirations }) {
         </div>
         <div className="flex flex-col gap-3">
           {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
+        </div>
+        <div className="text-center mt-8">
+          <button onClick={onLegal} className="text-xs text-slate-400 hover:text-slate-600 transition-all">
+            Mentions légales
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LegalSection({ title, children }) {
+  return (
+    <Card>
+      <h2 className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: "#2563eb" }}>{title}</h2>
+      <div className="flex flex-col gap-2 text-sm text-slate-600 leading-relaxed">{children}</div>
+    </Card>
+  );
+}
+
+function LegalScreen({ onBack }) {
+  return (
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
+      <div className="max-w-2xl mx-auto px-5 py-8">
+        <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-xs mb-6 transition-all">
+          ← Retour
+        </button>
+        <h1 className="text-2xl font-bold mb-6" style={{ color: "#1a1a2e" }}>Mentions légales</h1>
+        <div className="flex flex-col gap-4">
+          <LegalSection title="Mentions légales">
+            <p>Éditeur : [NOM COMPLET À REMPLACER]</p>
+            <p>Email : contact@cozimo.fr</p>
+            <p>Hébergeur : Vercel Inc, 340 Pine Street, Suite 900, San Francisco, CA 94104, États-Unis</p>
+          </LegalSection>
+          <LegalSection title="Données & confidentialité">
+            <p>Vos données sont stockées localement sur votre appareil (localStorage).</p>
+            <p>Aucune donnée personnelle n'est collectée ni transmise à nos serveurs.</p>
+            <p>Aucun cookie de tracking n'est utilisé.</p>
+            <p>Pour toute question : contact@cozimo.fr</p>
+          </LegalSection>
+          <LegalSection title="Propriété intellectuelle">
+            <p>Cozimo est une marque déposée à l'INPI.</p>
+            <p>Tout le contenu de cette application est protégé par le droit d'auteur.</p>
+            <p>© 2025 Cozimo — Tous droits réservés.</p>
+          </LegalSection>
         </div>
       </div>
     </div>
@@ -3730,6 +3780,7 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [draftType, setDraftType] = useState(null);
   const [inspirations, setInspirations] = useState([]);
+  const [previousScreen, setPreviousScreen] = useState("new-type");
 
   useEffect(() => {
     loadData().then(d => {
@@ -3756,6 +3807,8 @@ export default function App() {
 
   const openProjectsList = () => setScreen("projects");
   const openInspirations = () => setScreen("inspirations");
+  const openLegal = () => { setPreviousScreen(screen); setScreen("legal"); };
+  const closeLegal = () => setScreen(previousScreen);
 
   const saveInspiration = (insp) => {
     setInspirations(prev => {
@@ -3833,8 +3886,10 @@ export default function App() {
         </div>
       </div>
     );
+  } else if (screen === "legal") {
+    content = <LegalScreen onBack={closeLegal} />;
   } else if (screen === "new-type") {
-    content = <NewProjectTypeScreen onSelect={selectType} onBack={projects.length > 0 ? openProjectsList : null} />;
+    content = <NewProjectTypeScreen onSelect={selectType} onBack={projects.length > 0 ? openProjectsList : null} onLegal={openLegal} />;
   } else if (screen === "new-details") {
     content = <NewProjectDetailsScreen type={draftType} onCreate={createProject} onBack={() => setScreen("new-type")} />;
   } else if (screen === "dashboard" && activeProject) {
@@ -3850,7 +3905,7 @@ export default function App() {
       />
     );
   } else {
-    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} onInspirations={openInspirations} />;
+    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} onInspirations={openInspirations} onLegal={openLegal} />;
   }
 
   return (
