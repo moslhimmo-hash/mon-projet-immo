@@ -46,6 +46,52 @@ function uid() {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+// ─── PARTAGE EN LECTURE SEULE ───────────────────────────────────────────────────
+// Encode un sous-ensemble "essentiel" du projet (étapes, budget, contacts, journal)
+// en base64url dans l'URL — pas de backend, le lien contient toute la donnée.
+function buildShareData(project) {
+  return {
+    name: project.name,
+    type: project.type,
+    icon: project.icon || null,
+    startDate: project.startDate,
+    checklist: project.checklist || {},
+    customSteps: project.customSteps || [],
+    budget: project.budget || {},
+    contacts: project.contacts || [],
+    journal: project.journal || [],
+    deadlines: project.deadlines || {},
+  };
+}
+
+function toBase64Url(b64) {
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function fromBase64Url(b64url) {
+  let b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4) b64 += "=";
+  return b64;
+}
+
+function encodeShareData(project) {
+  const json = JSON.stringify(buildShareData(project));
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return toBase64Url(btoa(binary));
+}
+
+function decodeShareData(encoded) {
+  try {
+    const binary = atob(fromBase64Url(encoded));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+}
+
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const PROJECT_TYPES = [
   { id: "achat-rp", label: "Achat résidence principale", icon: "🏡", desc: "Acheter mon logement" },
@@ -60,6 +106,9 @@ const PROJECT_TYPES = [
   { id: "sci", label: "SCI", icon: "🏢", desc: "Créer une société civile" },
   { id: "lmnp", label: "LMNP", icon: "🛋️", desc: "Location meublée non pro" },
 ];
+
+// Icônes proposées pour personnaliser un projet — remplace l'emoji par défaut du type.
+const CUSTOM_PROJECT_ICONS = ["🏠", "🏡", "🏢", "🏗️", "🔑", "🏷️", "🔄", "📈", "🌱", "🔨", "🏖️", "🌆", "🏘️", "💼", "🎯", "⭐", "🚀", "💡"];
 
 const IMPORTANCE = {
   essentielle: { label: "Essentielle", color: "#b91c1c", bg: "#fee2e2" },
@@ -1901,6 +1950,40 @@ function CozimoIcon({ size = 64 }) {
   );
 }
 
+function ShareModal({ link, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <h3 className="font-bold text-slate-800 text-base">🔗 Partager le projet</h3>
+          <button onClick={onClose}
+            className="flex-shrink-0 w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all text-sm">
+            ✕
+          </button>
+        </div>
+        <p className="text-sm text-slate-500 mb-4">Ce lien permet de consulter votre projet en lecture seule.</p>
+        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 mb-3">
+          <input readOnly value={link} onFocus={e => e.target.select()}
+            className="flex-1 bg-transparent text-xs text-slate-600 outline-none truncate" />
+        </div>
+        <button onClick={copyLink}
+          className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all">
+          {copied ? "✓ Lien copié !" : "Copier le lien"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function InfoModal({ step, onClose }) {
   if (!step?.info) return null;
   return (
@@ -2225,6 +2308,26 @@ function StarRating({ value = 0, onChange }) {
   );
 }
 
+function IconPicker({ value, onChange }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Icône</label>
+      <div className="grid grid-cols-6 gap-2">
+        {CUSTOM_PROJECT_ICONS.map(ic => (
+          <button
+            key={ic}
+            type="button"
+            onClick={() => onChange(ic)}
+            className={`w-9 h-9 rounded-lg flex items-center justify-center text-lg transition-all ${value === ic ? "bg-blue-100 ring-2 ring-blue-500" : "bg-slate-50 hover:bg-slate-100"}`}
+          >
+            {ic}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Stat({ label, value, sub, accent }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -2288,6 +2391,7 @@ function NewProjectDetailsScreen({ type, onCreate, onBack }) {
   const typeInfo = PROJECT_TYPES.find(t => t.id === type);
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 7));
+  const [icon, setIcon] = useState(typeInfo?.icon || CUSTOM_PROJECT_ICONS[0]);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6"
@@ -2304,10 +2408,11 @@ function NewProjectDetailsScreen({ type, onCreate, onBack }) {
           <div className="flex flex-col gap-4">
             <Input label="Nom du projet" value={name} onChange={setName} placeholder={`Ex : ${typeInfo?.label}`} />
             <Input label="Date de début" value={startDate} onChange={setStartDate} type="month" />
+            <IconPicker value={icon} onChange={setIcon} />
           </div>
         </Card>
         <button
-          onClick={() => onCreate({ name: name.trim() || typeInfo?.label, startDate })}
+          onClick={() => onCreate({ name: name.trim() || typeInfo?.label, startDate, icon })}
           className="w-full mt-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all"
         >
           Créer le projet 🚀
@@ -2317,34 +2422,128 @@ function NewProjectDetailsScreen({ type, onCreate, onBack }) {
   );
 }
 
-function ProjectCard({ project, onOpen }) {
+function ProjectCard({ project, onOpen, menuOpen, onToggleMenu, onRename, onArchive, onDelete }) {
   const { done, total } = getProjectStepCount(project);
   const pct = total ? Math.round((done / total) * 100) : 0;
   const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
+  const icon = project.icon || typeInfo?.icon;
   return (
-    <button onClick={() => onOpen(project.id)} className="text-left w-full">
-      <Card className="hover:shadow-md transition-all">
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px", fontSize: 20 }}>
-              {typeInfo?.icon}
+    <div className="relative">
+      <div onClick={() => onOpen(project.id)} role="button" tabIndex={0} className="cursor-pointer">
+        <Card className="hover:shadow-md transition-all">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px", fontSize: 20 }}>
+                {icon}
+              </div>
+              <div className="min-w-0">
+                <div className="font-bold text-slate-800 text-sm truncate">{project.name}</div>
+                <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+              </div>
             </div>
-            <div className="min-w-0">
-              <div className="font-bold text-slate-800 text-sm truncate">{project.name}</div>
-              <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <span className="text-xs font-semibold text-blue-600">{pct}%</span>
+              <button
+                onClick={e => { e.stopPropagation(); onToggleMenu(); }}
+                className="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 text-sm transition-all"
+              >
+                ⋯
+              </button>
             </div>
           </div>
-          <span className="text-xs font-semibold text-blue-600 flex-shrink-0">{pct}%</span>
+          <ProgressBar value={done} max={total} />
+        </Card>
+      </div>
+      {menuOpen && (
+        <div
+          onClick={e => e.stopPropagation()}
+          className="absolute right-3 top-14 z-10 bg-white rounded-xl shadow-lg overflow-hidden"
+          style={{ border: "0.5px solid #e5e3df", minWidth: 170 }}
+        >
+          <button onClick={onRename} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-all">
+            ✏️ Renommer
+          </button>
+          <button onClick={onArchive} className="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-all">
+            📦 Archiver
+          </button>
+          <button onClick={onDelete} className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-all">
+            🗑️ Supprimer
+          </button>
         </div>
-        <ProgressBar value={done} max={total} />
-      </Card>
-    </button>
+      )}
+    </div>
   );
 }
 
-function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal }) {
+function RenameProjectModal({ project, onSave, onClose }) {
+  const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
+  const [name, setName] = useState(project.name);
+  const [icon, setIcon] = useState(project.icon || typeInfo?.icon || CUSTOM_PROJECT_ICONS[0]);
   return (
-    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-slate-800 text-base mb-4">Renommer le projet</h3>
+        <div className="flex flex-col gap-4">
+          <Input label="Nom du projet" value={name} onChange={setName} />
+          <IconPicker value={icon} onChange={setIcon} />
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-500 text-sm font-semibold hover:bg-slate-50 transition-all">
+            Annuler
+          </button>
+          <button onClick={() => onSave({ name: name.trim() || project.name, icon })}
+            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-all">
+            Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedProjectCard({ project, onUnarchive }) {
+  const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
+  const icon = project.icon || typeInfo?.icon;
+  return (
+    <Card className="opacity-70">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#94a3b8", borderRadius: "10px", fontSize: 20 }}>
+            {icon}
+          </div>
+          <div className="min-w-0">
+            <div className="font-bold text-slate-700 text-sm truncate">{project.name}</div>
+            <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+          </div>
+        </div>
+        <button onClick={() => onUnarchive(project.id)}
+          className="text-xs font-semibold text-blue-600 hover:underline flex-shrink-0">
+          Désarchiver
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal, onRename, onArchive, onDelete }) {
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [renamingProject, setRenamingProject] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const activeProjects = projects.filter(p => !p.archived);
+  const archivedProjects = projects.filter(p => p.archived);
+  const closeMenu = () => setOpenMenuId(null);
+
+  const confirmDelete = (project) => {
+    if (window.confirm(`Supprimer définitivement "${project.name}" ? Cette action est irréversible.`)) {
+      onDelete(project.id);
+    }
+    closeMenu();
+  };
+
+  return (
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }} onClick={closeMenu}>
       <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center gap-3 mb-2">
@@ -2353,7 +2552,7 @@ function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal })
             </div>
             <h1 className="text-2xl font-bold">Mes projets</h1>
           </div>
-          <p className="text-slate-400 text-sm">{projects.length} projet{projects.length > 1 ? "s" : ""} en cours</p>
+          <p className="text-slate-400 text-sm">{activeProjects.length} projet{activeProjects.length > 1 ? "s" : ""} en cours</p>
         </div>
       </div>
       <div className="max-w-2xl mx-auto px-5 -mt-6 pb-10">
@@ -2374,14 +2573,44 @@ function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal })
           </button>
         </div>
         <div className="flex flex-col gap-3">
-          {projects.map(p => <ProjectCard key={p.id} project={p} onOpen={onOpen} />)}
+          {activeProjects.map(p => (
+            <ProjectCard
+              key={p.id}
+              project={p}
+              onOpen={onOpen}
+              menuOpen={openMenuId === p.id}
+              onToggleMenu={() => setOpenMenuId(openMenuId === p.id ? null : p.id)}
+              onRename={() => { setRenamingProject(p); closeMenu(); }}
+              onArchive={() => { onArchive(p.id); closeMenu(); }}
+              onDelete={() => confirmDelete(p)}
+            />
+          ))}
         </div>
+        {archivedProjects.length > 0 && (
+          <div className="text-center mt-6" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowArchived(s => !s)} className="text-xs text-slate-400 hover:text-slate-600 transition-all">
+              📦 Projets archivés ({archivedProjects.length})
+            </button>
+            {showArchived && (
+              <div className="flex flex-col gap-3 mt-4 text-left">
+                {archivedProjects.map(p => <ArchivedProjectCard key={p.id} project={p} onUnarchive={onArchive} />)}
+              </div>
+            )}
+          </div>
+        )}
         <div className="text-center mt-8">
           <button onClick={onLegal} className="text-xs text-slate-400 hover:text-slate-600 transition-all">
             Mentions légales
           </button>
         </div>
       </div>
+      {renamingProject && (
+        <RenameProjectModal
+          project={renamingProject}
+          onClose={() => setRenamingProject(null)}
+          onSave={(patch) => { onRename(renamingProject.id, patch); setRenamingProject(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -2421,6 +2650,158 @@ function LegalScreen({ onBack }) {
             <p>© 2025 Cozimo — Tous droits réservés.</p>
           </LegalSection>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Vue en lecture seule d'un projet reçu via ?share= — mêmes données (étapes,
+// budget, contacts, journal) que le dashboard, sans aucun moyen de modification.
+function SharedProjectScreen({ data, onCreateOwn }) {
+  const typeInfo = PROJECT_TYPES.find(t => t.id === data.type);
+  const steps = STEPS_BY_TYPE[data.type] || [];
+  const checklist = data.checklist || {};
+
+  const phases = {};
+  steps.forEach(s => {
+    const key = s.tag ? `${s.tag} — ${s.phase}` : s.phase;
+    if (!phases[key]) phases[key] = [];
+    phases[key].push(s);
+  });
+  (data.customSteps || []).forEach(cs => {
+    if (!phases[cs.phaseKey]) phases[cs.phaseKey] = [];
+    phases[cs.phaseKey].push(mapCustomStep(cs));
+  });
+  const allSteps = Object.values(phases).flat();
+  const done = allSteps.filter(s => checklist[s.id]).length;
+
+  const b = data.budget || {};
+  const budgetFamily = getBudgetFamily(data.type);
+  let budgetTotal = 0, resteDisponible = 0, indicators = [];
+  if (budgetFamily !== "generic") {
+    const derived = computeBudgetDerived(budgetFamily, b);
+    budgetTotal = derived.budgetTotal;
+    resteDisponible = derived.resteDisponible;
+    indicators = getBudgetIndicators(budgetFamily, derived);
+  } else {
+    // Même calcul que le budget générique (Financement/Acquisition/Installation) de GenericBudgetTab.
+    const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+    const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
+    budgetTotal = apportPersonnel + capaciteEmprunt;
+    const prixAchat = parseFloat(b.prixAchat) || 0;
+    const fraisNotaire = calcNotaire(prixAchat, !!b.neuf);
+    const fraisAgence = parseFloat(b.fraisAgence) || 0;
+    const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
+    const fraisCourtier = parseFloat(b.fraisCourtier) || 0;
+    const totalAcquisition = prixAchat + fraisNotaire + fraisAgence + fraisDossierBancaire + fraisCourtier;
+    const budgetTravaux = parseFloat(b.budgetTravaux) || 0;
+    const cuisineElectromenager = parseFloat(b.cuisineElectromenager) || 0;
+    const mobilier = parseFloat(b.mobilier) || 0;
+    const decoration = parseFloat(b.decoration) || 0;
+    const totalInstallation = budgetTravaux + cuisineElectromenager + mobilier + decoration;
+    resteDisponible = budgetTotal - totalAcquisition - totalInstallation;
+  }
+  const hasBudgetData = budgetTotal > 0 || resteDisponible !== 0;
+
+  const contacts = data.contacts || [];
+  const journal = [...(data.journal || [])].sort((a, b2) => (a.date < b2.date ? 1 : -1));
+
+  return (
+    <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
+      <div className="text-white px-5 pt-8 pb-10" style={{ background: "#1a1a2e" }}>
+        <div className="max-w-2xl mx-auto">
+          <div className="mb-4"><CozimoLogo width={90} height={27} /></div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold mb-4"
+            style={{ background: "rgba(255,255,255,0.12)", color: "#fbbf24" }}>
+            👁 Mode lecture seule
+          </div>
+          <h1 className="text-2xl font-bold truncate">{data.icon || typeInfo?.icon} {data.name}</h1>
+          <p className="text-slate-400 text-sm mt-0.5">{typeInfo?.label}</p>
+          <div className="mt-4 mb-2 flex justify-between text-sm">
+            <span className="text-slate-300">Progression</span>
+            <span className="text-white font-bold">{done}/{allSteps.length} étapes</span>
+          </div>
+          <ProgressBar value={done} max={allSteps.length} color="#3b82f6" />
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-5 -mt-4 pb-10 flex flex-col gap-4">
+        <Card>
+          <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>📋</span> Étapes</h3>
+          <div className="flex flex-col gap-4">
+            {Object.entries(phases).map(([phase, items]) => (
+              <div key={phase}>
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">{phase}</div>
+                <div className="flex flex-col gap-1.5">
+                  {items.map(s => (
+                    <div key={s.id} className="flex items-center gap-2 text-sm">
+                      <span>{checklist[s.id] ? "✅" : "⬜"}</span>
+                      <span className={checklist[s.id] ? "text-slate-400 line-through" : "text-slate-700"}>{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {hasBudgetData && (
+          <Card>
+            <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>💶</span> Budget</h3>
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <Stat label="Budget total" value={fmt(budgetTotal)} />
+              <Stat label="Reste disponible" value={fmt(resteDisponible)} accent={resteDisponible < 0 ? "text-red-600" : "text-emerald-600"} />
+            </div>
+            {indicators.length > 0 && (
+              <div className="flex flex-col gap-1.5 mt-2 pt-3 border-t border-slate-100">
+                {indicators.map((ind, i) => (
+                  <div key={i} className="flex justify-between gap-3 text-sm">
+                    <span className="text-slate-500">{ind.label}</span>
+                    <span className="font-semibold text-slate-700 flex-shrink-0">{ind.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {contacts.length > 0 && (
+          <Card>
+            <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>📇</span> Contacts</h3>
+            <div className="flex flex-col gap-3">
+              {contacts.map(c => (
+                <div key={c.id} className="text-sm">
+                  <div className="font-semibold text-slate-800">{c.nom}</div>
+                  <div className="text-xs text-slate-400">
+                    {CONTACT_ROLES.find(r => r.value === c.role)?.label || "Autre"}
+                    {c.telephone ? ` · ${c.telephone}` : ""}
+                    {c.email ? ` · ${c.email}` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {journal.length > 0 && (
+          <Card>
+            <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>📓</span> Journal</h3>
+            <div className="flex flex-col gap-3">
+              {journal.map((e, i) => (
+                <div key={i} className="text-sm">
+                  <div className="text-xs text-slate-400">{fmtDate(e.date)}</div>
+                  <div className="font-semibold text-slate-700">{e.title}</div>
+                  {e.description && <div className="text-xs text-slate-500">{e.description}</div>}
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        <button onClick={onCreateOwn}
+          className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+          Créer mon propre projet
+        </button>
       </div>
     </div>
   );
@@ -3380,6 +3761,8 @@ function Dashboard({ project, onUpdate, onBack }) {
   const [aiHistory, setAiHistory] = useState([]);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareLink, setShareLink] = useState("");
 
   useEffect(() => {
     loadApiKey().then(setApiKey);
@@ -3403,6 +3786,12 @@ function Dashboard({ project, onUpdate, onBack }) {
     } finally {
       setPdfGenerating(false);
     }
+  };
+
+  const handleShare = () => {
+    const encoded = encodeShareData(project);
+    setShareLink(`${window.location.origin}${window.location.pathname}?share=${encoded}`);
+    setShareOpen(true);
   };
 
   const steps = STEPS_BY_TYPE[project.type] || [];
@@ -3508,6 +3897,7 @@ function Dashboard({ project, onUpdate, onBack }) {
           onClose={() => setAiOpen(false)}
         />
       )}
+      {shareOpen && <ShareModal link={shareLink} onClose={() => setShareOpen(false)} />}
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
@@ -3518,8 +3908,12 @@ function Dashboard({ project, onUpdate, onBack }) {
           <div className="flex justify-between items-start mb-6">
             <div className="min-w-0">
               <h1 className="text-2xl font-bold truncate">{project.name}</h1>
-              <p className="text-slate-400 text-sm mt-0.5">{typeInfo?.icon} {typeInfo?.label}</p>
+              <p className="text-slate-400 text-sm mt-0.5">{project.icon || typeInfo?.icon} {typeInfo?.label}</p>
             </div>
+            <button onClick={handleShare}
+              className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all">
+              🔗 Partager
+            </button>
           </div>
           <div className="mb-2 flex justify-between text-sm">
             <span className="text-slate-300">Progression</span>
@@ -3782,13 +4176,24 @@ export default function App() {
   const [draftType, setDraftType] = useState(null);
   const [inspirations, setInspirations] = useState([]);
   const [previousScreen, setPreviousScreen] = useState("new-type");
+  const [sharedProject, setSharedProject] = useState(null);
 
   useEffect(() => {
+    const shareParam = new URLSearchParams(window.location.search).get("share");
+    let sharedOk = false;
+    if (shareParam) {
+      const decoded = decodeShareData(shareParam);
+      if (decoded) {
+        setSharedProject(decoded);
+        setScreen("shared");
+        sharedOk = true;
+      }
+    }
     loadData().then(d => {
       const projs = d?.projects || [];
       const activeIdLoaded = d?.activeId || null;
       setActiveId(activeIdLoaded);
-      setScreen(projs.length > 0 ? "projects" : "new-type");
+      if (!sharedOk) setScreen(projs.length > 0 ? "projects" : "new-type");
 
       // Vérifie les échéances au chargement de l'app et notifie si nécessaire.
       const { changed, projects: checked } = checkDeadlineNotifications(projs);
@@ -3829,6 +4234,7 @@ export default function App() {
 
   const startNewProject = () => {
     setDraftType(null);
+    setSharedProject(null);
     setScreen("new-type");
   };
 
@@ -3837,12 +4243,13 @@ export default function App() {
     setScreen("new-details");
   };
 
-  const createProject = ({ name, startDate }) => {
+  const createProject = ({ name, startDate, icon }) => {
     const typeLabel = PROJECT_TYPES.find(t => t.id === draftType)?.label || "Projet";
     const project = {
       id: uid(),
       name: name || typeLabel,
       type: draftType,
+      icon: icon || null,
       createdAt: new Date().toISOString(),
       startDate,
       checklist: {},
@@ -3867,6 +4274,24 @@ export default function App() {
     setScreen("dashboard");
   };
 
+  const renameProject = (id, patch) => {
+    const next = projects.map(p => (p.id === id ? { ...p, ...patch } : p));
+    setProjects(next);
+    persist(next, activeId);
+  };
+  const toggleArchiveProject = (id) => {
+    const next = projects.map(p => (p.id === id ? { ...p, archived: !p.archived } : p));
+    setProjects(next);
+    persist(next, activeId);
+  };
+  const deleteProject = (id) => {
+    const next = projects.filter(p => p.id !== id);
+    const nextActive = activeId === id ? null : activeId;
+    setProjects(next);
+    setActiveId(nextActive);
+    persist(next, nextActive);
+  };
+
   const updateActiveProject = useCallback((updater) => {
     setProjects(prev => {
       const next = prev.map(p => p.id === activeId ? updater(p) : p);
@@ -3877,8 +4302,17 @@ export default function App() {
 
   const activeProject = projects.find(p => p.id === activeId);
 
+  const exitSharedMode = () => {
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    startNewProject();
+  };
+
   let content;
-  if (screen === "loading") {
+  if (screen === "shared" && sharedProject) {
+    content = <SharedProjectScreen data={sharedProject} onCreateOwn={exitSharedMode} />;
+  } else if (screen === "loading") {
     content = (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#1a1a2e" }}>
         <div className="text-white text-center">
@@ -3906,7 +4340,18 @@ export default function App() {
       />
     );
   } else {
-    content = <ProjectsScreen projects={projects} onOpen={openProject} onCreate={startNewProject} onInspirations={openInspirations} onLegal={openLegal} />;
+    content = (
+      <ProjectsScreen
+        projects={projects}
+        onOpen={openProject}
+        onCreate={startNewProject}
+        onInspirations={openInspirations}
+        onLegal={openLegal}
+        onRename={renameProject}
+        onArchive={toggleArchiveProject}
+        onDelete={deleteProject}
+      />
+    );
   }
 
   return (
