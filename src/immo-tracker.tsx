@@ -2481,6 +2481,7 @@ function NewProjectTypeScreen({ onSelect, onBack, onLegal }) {
             <h1 className="text-2xl font-bold text-white mb-2">Nouveau projet</h1>
           )}
           <p className="text-slate-400 text-sm">{isHome ? "Tout votre projet immo dans une seule app" : "Quel type de projet voulez-vous suivre ?"}</p>
+          {isHome && <p className="text-slate-400 text-xs mt-1">La to-do list sous stéroïdes de votre projet immo 🏠</p>}
         </div>
         <div className="grid grid-cols-2 gap-3">
           {PROJECT_TYPES.map(t => (

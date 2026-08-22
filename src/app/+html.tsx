@@ -18,6 +18,9 @@ export default function Root({ children }: { children: React.ReactNode }) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
 
+        <title>Cozimo — La to-do list sous stéroïdes de votre projet immo</title>
+        <meta name="description" content="Cozimo centralise tout votre projet immobilier — étapes, budget, contacts, comparateur de biens — pour ne plus jamais vous perdre entre 50 tableurs Excel et conversations WhatsApp." />
+
         {/*
           Disable body scrolling on web. This makes ScrollView components work closer to how they do on native.
           However, body scrolling is often nice to have for mobile web. If you want to enable it, remove this line.
