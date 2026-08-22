@@ -42,6 +42,10 @@ async function saveOnboardingDone() {
   try { await window.storage.set(ONBOARDING_STORAGE, "true"); } catch {}
 }
 
+// Fermeture définitive de la bannière d'installation PWA — localStorage (pas window.storage),
+// pour rester synchrone et disponible dès le tout premier rendu.
+const INSTALL_BANNER_DISMISSED_KEY = "cozimo-install-dismissed";
+
 function uid() {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -2395,6 +2399,65 @@ function OnboardingScreen({ onFinish }) {
   );
 }
 
+function InstallBanner() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [dismissed, setDismissed] = useState(true);
+  const [installed, setInstalled] = useState(true);
+
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(INSTALL_BANNER_DISMISSED_KEY) === "true");
+    } catch {
+      setDismissed(false);
+    }
+    const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+    setInstalled(!!standalone);
+
+    const onBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    const onAppInstalled = () => setInstalled(true);
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
+  const install = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+  };
+
+  const dismiss = () => {
+    try { localStorage.setItem(INSTALL_BANNER_DISMISSED_KEY, "true"); } catch {}
+    setDismissed(true);
+  };
+
+  if (installed || dismissed || !deferredPrompt) return null;
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40 px-4 py-3 flex items-center justify-between gap-3"
+      style={{ background: "#1a1a2e", borderTop: "0.5px solid rgba(255,255,255,0.12)" }}>
+      <p className="text-white text-xs flex-1">📲 Installez Cozimo sur votre écran d'accueil !</p>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button onClick={install}
+          className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all">
+          Installer
+        </button>
+        <button onClick={dismiss}
+          className="text-slate-400 hover:text-white text-xs w-6 h-6 flex items-center justify-center transition-all">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NewProjectTypeScreen({ onSelect, onBack, onLegal }) {
   const isHome = !onBack;
   return (
@@ -2439,6 +2502,7 @@ function NewProjectTypeScreen({ onSelect, onBack, onLegal }) {
           </button>
         </div>
       </div>
+      {isHome && <InstallBanner />}
     </div>
   );
 }
@@ -4240,6 +4304,21 @@ export default function App() {
 
   useEffect(() => {
     if (typeof document !== "undefined") document.title = "Cozimo";
+  }, []);
+
+  // PWA — enregistrement du service worker (cache hors ligne). L'écran de
+  // chargement asynchrone fait que ce composant monte après l'évènement "load"
+  // de la page : on enregistre immédiatement si c'est déjà le cas.
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      const register = () => navigator.serviceWorker.register("/sw.js");
+      if (document.readyState === "complete") {
+        register();
+      } else {
+        window.addEventListener("load", register);
+        return () => window.removeEventListener("load", register);
+      }
+    }
   }, []);
 
   const persist = useCallback((projs, active) => {
