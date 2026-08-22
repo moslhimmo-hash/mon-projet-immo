@@ -42,6 +42,20 @@ async function saveInspirations(list) {
   try { await window.storage.set(INSPIRATIONS_STORAGE, JSON.stringify(list)); } catch {}
 }
 
+// Marqueur "onboarding vu" — n'affiche le guide qu'au tout premier lancement.
+const ONBOARDING_STORAGE = "cozimo-onboarding-done";
+
+async function loadOnboardingDone() {
+  try {
+    const r = await window.storage.get(ONBOARDING_STORAGE);
+    return r?.value === "true";
+  } catch { return false; }
+}
+
+async function saveOnboardingDone() {
+  try { await window.storage.set(ONBOARDING_STORAGE, "true"); } catch {}
+}
+
 function uid() {
   return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -2339,6 +2353,70 @@ function Stat({ label, value, sub, accent }) {
 }
 
 // ─── SCREENS ──────────────────────────────────────────────────────────────────
+const ONBOARDING_SLIDES = [
+  {
+    icon: "🏠",
+    title: "Bienvenue sur Cozimo !",
+    text: "Votre assistant immobilier de A à Z. Suivez chaque étape de votre projet, gérez votre budget et prenez les bonnes décisions.",
+  },
+  {
+    icon: "📋",
+    title: "Des étapes guidées",
+    text: "Chaque type de projet génère automatiquement vos étapes. Cliquez sur ℹ️ pour des conseils détaillés sur chaque action.",
+  },
+  {
+    icon: "💰",
+    title: "Budget & finances",
+    text: "Suivez tous vos coûts en temps réel. Frais de notaire, travaux, mensualités — tout est calculé automatiquement.",
+  },
+  {
+    icon: "✨",
+    title: "Votre assistant IA",
+    text: "Posez vos questions immobilières directement dans l'app. Analyse de compromis, conseils personnalisés, réponses expertes.",
+  },
+];
+
+function OnboardingScreen({ onFinish }) {
+  const [index, setIndex] = useState(0);
+  const slide = ONBOARDING_SLIDES[index];
+  const isLast = index === ONBOARDING_SLIDES.length - 1;
+
+  const next = () => {
+    if (isLast) onFinish();
+    else setIndex(i => i + 1);
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col p-6" style={{ background: "#1a1a2e" }}>
+      <div className="flex justify-end">
+        <button onClick={onFinish} className="text-slate-400 hover:text-white text-xs transition-all">
+          Passer
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col items-center justify-center text-center max-w-md mx-auto w-full px-4">
+        <div className="text-7xl mb-6">{slide.icon}</div>
+        <h1 className="text-2xl font-bold text-white mb-3">{slide.title}</h1>
+        <p className="text-slate-300 text-sm leading-relaxed">{slide.text}</p>
+      </div>
+      <div className="flex flex-col items-center gap-6 max-w-md mx-auto w-full">
+        <div className="flex gap-2">
+          {ONBOARDING_SLIDES.map((_, i) => (
+            <div
+              key={i}
+              className="rounded-full transition-all"
+              style={{ width: i === index ? 20 : 8, height: 8, background: i === index ? "#2563eb" : "rgba(255,255,255,0.2)" }}
+            />
+          ))}
+        </div>
+        <button onClick={next}
+          className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+          {isLast ? "Commencer 🚀" : "Suivant →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NewProjectTypeScreen({ onSelect, onBack, onLegal }) {
   const isHome = !onBack;
   return (
@@ -4189,11 +4267,13 @@ export default function App() {
         sharedOk = true;
       }
     }
-    loadData().then(d => {
+    Promise.all([loadData(), loadOnboardingDone()]).then(([d, onboardingDone]) => {
       const projs = d?.projects || [];
       const activeIdLoaded = d?.activeId || null;
       setActiveId(activeIdLoaded);
-      if (!sharedOk) setScreen(projs.length > 0 ? "projects" : "new-type");
+      if (!sharedOk) {
+        setScreen(!onboardingDone ? "onboarding" : (projs.length > 0 ? "projects" : "new-type"));
+      }
 
       // Vérifie les échéances au chargement de l'app et notifie si nécessaire.
       const { changed, projects: checked } = checkDeadlineNotifications(projs);
@@ -4215,6 +4295,11 @@ export default function App() {
   const openInspirations = () => setScreen("inspirations");
   const openLegal = () => { setPreviousScreen(screen); setScreen("legal"); };
   const closeLegal = () => setScreen(previousScreen);
+
+  const finishOnboarding = () => {
+    saveOnboardingDone();
+    setScreen(projects.length > 0 ? "projects" : "new-type");
+  };
 
   const saveInspiration = (insp) => {
     setInspirations(prev => {
@@ -4312,6 +4397,8 @@ export default function App() {
   let content;
   if (screen === "shared" && sharedProject) {
     content = <SharedProjectScreen data={sharedProject} onCreateOwn={exitSharedMode} />;
+  } else if (screen === "onboarding") {
+    content = <OnboardingScreen onFinish={finishOnboarding} />;
   } else if (screen === "loading") {
     content = (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#1a1a2e" }}>
