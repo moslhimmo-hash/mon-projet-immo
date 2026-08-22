@@ -4304,7 +4304,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (typeof document !== "undefined") document.title = "Cozimo";
+    if (typeof document !== "undefined") document.title = "Cozimo — La to-do list sous stéroïdes de votre projet immo";
   }, []);
 
   // PWA — enregistrement du service worker (cache hors ligne). L'écran de
