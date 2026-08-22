@@ -14,20 +14,6 @@ async function saveData(data) {
   try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch {}
 }
 
-// Clé API Anthropic de l'utilisateur — stockée uniquement en local, jamais dans le code ni le repo.
-const AI_KEY_STORAGE = "cozimo-ai-key";
-
-async function loadApiKey() {
-  try {
-    const r = await window.storage.get(AI_KEY_STORAGE);
-    return r?.value || null;
-  } catch { return null; }
-}
-
-async function saveApiKey(key) {
-  try { await window.storage.set(AI_KEY_STORAGE, key); } catch {}
-}
-
 // Bibliothèque d'inspirations — commune à tous les projets, stockage dédié.
 const INSPIRATIONS_STORAGE = "cozimo-inspirations";
 
@@ -195,9 +181,7 @@ const POTENTIEL_OPTIONS = [
 ];
 const POTENTIEL_RANK = { faible: 1, moyen: 2, fort: 3 };
 
-// ─── ASSISTANT IA ───────────────────────────────────────────────────────────────
-const AI_MODEL = "claude-sonnet-5";
-
+// ─── GÉNÉRATEUR DE PROMPT IA ────────────────────────────────────────────────────
 const AI_SUGGESTIONS = {
   achat: [
     "Pourquoi la banque me demande ce document ?",
@@ -1600,60 +1584,65 @@ function investisseurRows(biens) {
   ];
 }
 
-function buildAISystemPrompt(project) {
+// Résumé budget (total + mensualité) toutes familles confondues, réutilisé pour le
+// contexte affiché dans la modale et pour le prompt généré.
+function getPromptBudgetSummary(project) {
+  const b = project.budget || {};
+  const family = getBudgetFamily(project.type);
+  if (family === "generic") {
+    const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+    const capaciteEmprunt = parseFloat(b.capaciteEmprunt) || 0;
+    const budgetTotal = apportPersonnel + capaciteEmprunt;
+    const prixAchat = parseFloat(b.prixAchat) || 0;
+    const capitalEmprunte = Math.max(0, prixAchat - apportPersonnel);
+    const canComputeMensualite = apportPersonnel > 0 && capaciteEmprunt > 0 && prixAchat > 0;
+    const mensualite = canComputeMensualite ? calcMensualite(capitalEmprunte, 25, 3.5) : 0;
+    return { budgetTotal, mensualite };
+  }
+  const derived = computeBudgetDerived(family, b);
+  const mensualite = (derived.mensualiteHorsAssurance || 0) + (parseFloat(b.assuranceEmprunteur) || 0);
+  return { budgetTotal: derived.budgetTotal || 0, mensualite };
+}
+
+// Données de contexte du projet affichées en lecture seule dans la modale de génération de prompt.
+function buildPromptContext(project) {
   const steps = STEPS_BY_TYPE[project.type] || [];
   const allSteps = [...steps, ...(project.customSteps || []).map(mapCustomStep)];
   const done = allSteps.filter(s => project.checklist[s.id]).length;
   const pct = allSteps.length ? Math.round((done / allSteps.length) * 100) : 0;
   const typeLabel = PROJECT_TYPES.find(t => t.id === project.type)?.label || project.type;
   const nextStep = allSteps.find(s => !project.checklist[s.id]);
-
-  const b = project.budget || {};
-  const budgetTotal = (parseFloat(b.apportPersonnel) || 0) + (parseFloat(b.capaciteEmprunt) || 0);
-  const prixAchat = parseFloat(b.prixAchat) || 0;
-  let budgetLine = "non renseigné";
-  if (budgetTotal > 0) budgetLine = `${fmt(budgetTotal)} de budget total (apport + capacité d'emprunt)`;
-  else if (prixAchat > 0) budgetLine = `prix d'achat prévu de ${fmt(prixAchat)}`;
-
-  return `Tu es un assistant immobilier expert intégré dans Cozimo.
-L'utilisateur a un projet de type ${typeLabel}.
-Il en est à ${pct}% de son projet (${done}/${allSteps.length} étapes cochées).
-Sa prochaine étape est : ${nextStep ? nextStep.label : "toutes les étapes sont complétées"}.
-Son budget est : ${budgetLine}.
-Réponds de façon concise, pratique et bienveillante en français.`;
+  const completedLabels = allSteps.filter(s => project.checklist[s.id]).map(s => s.label);
+  const { budgetTotal, mensualite } = getPromptBudgetSummary(project);
+  const journal = [...(project.journal || [])].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 5);
+  return { typeLabel, done, total: allSteps.length, pct, nextStep, completedLabels, budgetTotal, mensualite, journal };
 }
 
-async function callAnthropic(apiKey, systemPrompt, history, question) {
-  const messages = [];
-  history.slice(-5).forEach(h => {
-    messages.push({ role: "user", content: h.question });
-    messages.push({ role: "assistant", content: h.answer });
-  });
-  messages.push({ role: "user", content: question });
+// Assemble le prompt final selon les infos cochées par l'utilisateur.
+function buildGeneratedPrompt(project, include, question) {
+  const ctx = buildPromptContext(project);
+  const contacts = project.contacts || [];
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const msg = body?.error?.message || `Erreur API (${res.status})`;
-    throw new Error(msg);
+  let prompt = `Je gère un projet immobilier ${ctx.typeLabel} sur Cozimo.\n\nVoici ma situation :`;
+  if (include.typeProgress) {
+    prompt += `\n- Progression : ${ctx.pct}% (${ctx.done}/${ctx.total} étapes complétées)`;
+    prompt += `\n- Prochaine étape : ${ctx.nextStep ? ctx.nextStep.label : "toutes les étapes sont complétées"}`;
   }
-  const data = await res.json();
-  return data.content?.[0]?.text || "Pas de réponse.";
+  if (include.budget && ctx.budgetTotal > 0) {
+    prompt += `\n- Budget total : ${fmt(ctx.budgetTotal)}`;
+    if (ctx.mensualite > 0) prompt += `\n- Mensualité estimée : ${fmt(ctx.mensualite)}/mois`;
+  }
+  if (include.doneSteps && ctx.completedLabels.length > 0) {
+    prompt += `\n- Étapes complétées : ${ctx.completedLabels.join(", ")}`;
+  }
+  if (include.contacts && contacts.length > 0) {
+    prompt += `\n- Contacts : ${contacts.map(c => `${c.nom} (${CONTACT_ROLES.find(r => r.value === c.role)?.label || "Autre"})`).join(", ")}`;
+  }
+  if (include.journal && ctx.journal.length > 0) {
+    prompt += `\n- Dernières actions : ${ctx.journal.map(e => e.title).join(", ")}`;
+  }
+  prompt += `\n\nMa question : ${question.trim() || "…"}`;
+  return prompt;
 }
 
 // ─── EXPORT PDF ───────────────────────────────────────────────────────────────
@@ -2098,42 +2087,30 @@ function ProModal({ step, proType, onClose }) {
   );
 }
 
-function AIModal({ project, apiKey, onSaveKey, history, onAddExchange, onClose }) {
-  const [screen, setScreen] = useState(apiKey ? "chat" : "config");
-  const [keyInput, setKeyInput] = useState("");
+const PROMPT_INCLUDE_OPTIONS = [
+  { key: "typeProgress", label: "Type et progression" },
+  { key: "budget", label: "Budget détaillé" },
+  { key: "doneSteps", label: "Liste des étapes complétées" },
+  { key: "contacts", label: "Contacts du projet" },
+  { key: "journal", label: "Dernières entrées du journal" },
+];
+
+function PromptModal({ project, onClose }) {
+  const ctx = buildPromptContext(project);
+  const [include, setInclude] = useState({ typeProgress: true, budget: false, doneSteps: false, contacts: false, journal: false });
   const [question, setQuestion] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const suggestions = getAISuggestions(project.type);
+  const generatedPrompt = buildGeneratedPrompt(project, include, question);
+  const toggleInclude = (key) => setInclude(prev => ({ ...prev, [key]: !prev[key] }));
 
-  const saveKey = () => {
-    const trimmed = keyInput.trim();
-    if (!trimmed.startsWith("sk-ant-")) {
-      setError("La clé doit commencer par sk-ant-…");
-      return;
-    }
-    onSaveKey(trimmed);
-    setKeyInput("");
-    setError("");
-    setScreen("chat");
-  };
-
-  const ask = async (q) => {
-    const text = (q || question).trim();
-    if (!text || sending) return;
-    setSending(true);
-    setError("");
+  const copyPrompt = async () => {
     try {
-      const systemPrompt = buildAISystemPrompt(project);
-      const answer = await callAnthropic(apiKey, systemPrompt, history, text);
-      onAddExchange({ question: text, answer });
-      setQuestion("");
-    } catch (e) {
-      setError(e.message || "Une erreur est survenue.");
-    } finally {
-      setSending(false);
-    }
+      await navigator.clipboard.writeText(generatedPrompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
   };
 
   return (
@@ -2142,13 +2119,11 @@ function AIModal({ project, apiKey, onSaveKey, history, onAddExchange, onClose }
       onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
-        style={{ maxHeight: "85vh" }}>
+        style={{ maxHeight: "90vh" }}>
         <div className="px-5 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3 flex-shrink-0">
           <div>
-            <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">✨ Assistant IA</div>
-            <h3 className="font-bold text-slate-800 text-base leading-snug">
-              {screen === "config" ? "Configurer votre clé API" : "Posez votre question"}
-            </h3>
+            <div className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">📋 Générateur de prompt</div>
+            <h3 className="font-bold text-slate-800 text-base leading-snug">Générer un prompt IA</h3>
           </div>
           <button onClick={onClose}
             className="flex-shrink-0 w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-all text-sm">
@@ -2156,82 +2131,85 @@ function AIModal({ project, apiKey, onSaveKey, history, onAddExchange, onClose }
           </button>
         </div>
 
-        {screen === "config" ? (
-          <div className="px-5 py-4 flex flex-col gap-4 overflow-y-auto">
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Pour utiliser l'assistant IA, entrez votre clé API Anthropic (obtenue sur console.anthropic.com).
-            </p>
-            {apiKey && <p className="text-xs text-slate-400">Clé actuelle : sk-ant-••••{apiKey.slice(-4)}</p>}
-            <Input label="Clé API Anthropic" value={keyInput} onChange={setKeyInput} type="password" placeholder="sk-ant-…" />
-            {error && <p className="text-xs text-red-500">{error}</p>}
-            <div className="bg-blue-50 rounded-xl px-3 py-2.5 text-xs text-blue-800">
-              🔒 Votre clé API est stockée localement sur votre appareil et n'est jamais partagée.
+        <div className="px-5 py-4 overflow-y-auto flex-1 flex flex-col gap-4">
+          {/* Contexte du projet — lecture seule */}
+          <div className="bg-slate-50 rounded-xl px-4 py-3 flex flex-col gap-1">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Contexte du projet</div>
+            <div className="text-xs text-slate-600">Type : {ctx.typeLabel}</div>
+            <div className="text-xs text-slate-600">Progression : {ctx.pct}% — {ctx.done}/{ctx.total} étapes</div>
+            <div className="text-xs text-slate-600">
+              Prochaine étape : {ctx.nextStep ? ctx.nextStep.label : "toutes les étapes sont complétées"}
             </div>
-            <div className="flex gap-3">
-              {apiKey && (
-                <button onClick={() => { setError(""); setScreen("chat"); }}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-all">
-                  Annuler
-                </button>
-              )}
-              <button onClick={saveKey}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
-                Enregistrer
-              </button>
+            {ctx.budgetTotal > 0 && <div className="text-xs text-slate-600">Budget total : {fmt(ctx.budgetTotal)}</div>}
+            {ctx.mensualite > 0 && <div className="text-xs text-slate-600">Mensualité estimée : {fmt(ctx.mensualite)}/mois</div>}
+          </div>
+
+          {/* Informations à inclure */}
+          <div>
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Informations à inclure</div>
+            <div className="flex flex-col gap-2">
+              {PROMPT_INCLUDE_OPTIONS.map(opt => (
+                <label key={opt.key} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={include[opt.key]} onChange={() => toggleInclude(opt.key)}
+                    className="w-4 h-4 accent-blue-600" />
+                  {opt.label}
+                </label>
+              ))}
             </div>
           </div>
-        ) : (
-          <>
-            <div className="px-5 pt-3 flex-shrink-0">
-              <button onClick={() => { setError(""); setScreen("config"); }} className="text-xs text-slate-400 hover:text-blue-600 transition-all">
-                Modifier la clé
-              </button>
-            </div>
-            <div className="px-5 py-3 overflow-y-auto flex-1 flex flex-col gap-3">
-              {history.length === 0 && (
-                <p className="text-sm text-slate-400">Posez une question sur votre projet, ou choisissez une suggestion ci-dessous.</p>
-              )}
-              {history.map((h, i) => (
-                <div key={i} className="flex flex-col gap-1.5">
-                  <div className="self-end max-w-[85%] bg-blue-600 text-white text-sm rounded-2xl rounded-br-sm px-3 py-2" style={{ marginLeft: "auto" }}>
-                    {h.question}
-                  </div>
-                  <div className="max-w-[85%] bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-bl-sm px-3 py-2 whitespace-pre-wrap">
-                    {h.answer}
-                  </div>
-                </div>
+
+          {/* Question */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Ma question</label>
+            <textarea
+              value={question}
+              onChange={e => setQuestion(e.target.value)}
+              placeholder={"Ex: Pourquoi la banque me demande ce document ?\nComment négocier le prix ? Quels sont mes recours si..."}
+              rows={3}
+              className="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white resize-none"
+            />
+          </div>
+
+          {/* Suggestions selon le type de projet */}
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((s, i) => (
+                <button key={i} onClick={() => setQuestion(s)}
+                  className="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-all">
+                  {s}
+                </button>
               ))}
-              {sending && <div className="text-xs text-slate-400">L'assistant réfléchit…</div>}
-              {error && <div className="text-xs text-red-500">{error}</div>}
             </div>
+          )}
 
-            {history.length === 0 && suggestions.length > 0 && (
-              <div className="px-5 pb-2 flex flex-wrap gap-2 flex-shrink-0">
-                {suggestions.map((s, i) => (
-                  <button key={i} onClick={() => ask(s)} disabled={sending}
-                    className="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-all disabled:opacity-50">
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
+          {/* Prompt généré */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Prompt généré</label>
+            <textarea
+              readOnly
+              value={generatedPrompt}
+              rows={8}
+              className="border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-600 outline-none bg-slate-50 resize-none"
+            />
+          </div>
 
-            <div className="px-5 pb-5 pt-2 border-t border-slate-100 flex gap-2 flex-shrink-0">
-              <input
-                value={question}
-                onChange={e => setQuestion(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); ask(); } }}
-                placeholder="Votre question…"
-                disabled={sending}
-                className="flex-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              />
-              <button onClick={() => ask()} disabled={sending || !question.trim()}
-                className="px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50 flex-shrink-0">
-                Envoyer
-              </button>
-            </div>
-          </>
-        )}
+          <button onClick={copyPrompt}
+            className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all">
+            {copied ? "✓ Copié !" : "📋 Copier le prompt"}
+          </button>
+
+          <div className="flex flex-wrap gap-x-4 gap-y-2 justify-center pt-1">
+            <a href="https://claude.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+              Ouvrir dans Claude →
+            </a>
+            <a href="https://chat.openai.com" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+              Ouvrir dans ChatGPT →
+            </a>
+            <a href="https://gemini.google.com" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">
+              Ouvrir dans Gemini →
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -3834,25 +3812,11 @@ function Dashboard({ project, onUpdate, onBack }) {
   const [addingStepPhase, setAddingStepPhase] = useState(null);
   const [newStepLabel, setNewStepLabel] = useState("");
   const [newStepImportance, setNewStepImportance] = useState("importante");
-  const [aiOpen, setAiOpen] = useState(false);
-  const [apiKey, setApiKey] = useState(null);
-  const [aiHistory, setAiHistory] = useState([]);
+  const [promptOpen, setPromptOpen] = useState(false);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [pdfError, setPdfError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [shareLink, setShareLink] = useState("");
-
-  useEffect(() => {
-    loadApiKey().then(setApiKey);
-  }, []);
-
-  const saveApiKeyHandler = (key) => {
-    setApiKey(key);
-    saveApiKey(key);
-  };
-  const addAiExchange = (exchange) => {
-    setAiHistory(prev => [...prev, exchange].slice(-5));
-  };
 
   const handleExportPDF = async () => {
     setPdfGenerating(true);
@@ -3965,16 +3929,7 @@ function Dashboard({ project, onUpdate, onBack }) {
     <div className="min-h-screen" style={{ background: "#f8f7f5" }}>
       <InfoModal step={infoStep} onClose={() => setInfoStep(null)} />
       <ProModal step={proStep} proType={proStep ? detectProType(proStep) : null} onClose={() => setProStep(null)} />
-      {aiOpen && (
-        <AIModal
-          project={project}
-          apiKey={apiKey}
-          onSaveKey={saveApiKeyHandler}
-          history={aiHistory}
-          onAddExchange={addAiExchange}
-          onClose={() => setAiOpen(false)}
-        />
-      )}
+      {promptOpen && <PromptModal project={project} onClose={() => setPromptOpen(false)} />}
       {shareOpen && <ShareModal link={shareLink} onClose={() => setShareOpen(false)} />}
       {/* Header */}
       <div className="text-white px-5 pt-8 pb-16" style={{ background: "#1a1a2e" }}>
@@ -4049,10 +4004,10 @@ function Dashboard({ project, onUpdate, onBack }) {
               )}
             </Card>
 
-            <button onClick={() => setAiOpen(true)}
+            <button onClick={() => setPromptOpen(true)}
               className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90"
               style={{ background: "#2563eb" }}>
-              ✨ Poser une question à l'IA
+              📋 Générer un prompt IA
             </button>
 
             {/* Échéances proches */}
