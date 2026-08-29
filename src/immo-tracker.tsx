@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 // ─── STORAGE HELPERS ───────────────────────────────────────────────────────────
 const STORAGE_KEY = "immo-tracker-v2";
@@ -94,6 +95,107 @@ function decodeShareData(encoded) {
   } catch {
     return null;
   }
+}
+
+// ─── AUTH OPTIONNELLE (SUPABASE) ────────────────────────────────────────────────
+// Principe : Cozimo fonctionne entièrement sans compte (localStorage). Le compte
+// est une option pour sauvegarder dans le cloud — jamais bloquant. Si les variables
+// d'environnement ne sont pas configurées, `supabase` reste null et toutes les
+// fonctions ci-dessous se comportent en no-op / erreur explicite plutôt que de planter.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const ACCOUNT_BANNER_DISMISSED_KEY = "cozimo-account-banner-dismissed";
+
+function authErrorMessage(error) {
+  const msg = error?.message || "";
+  if (msg.includes("Invalid login credentials")) return "Email ou mot de passe incorrect.";
+  if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("User already registered")) {
+    return "Un compte existe déjà avec cet email.";
+  }
+  if (msg.includes("Password should be at least")) return "Le mot de passe doit contenir au moins 6 caractères.";
+  if (msg.includes("Unable to validate email") || msg.includes("invalid")) return "Adresse email invalide.";
+  if (msg.includes("Email not confirmed")) return "Merci de confirmer votre email avant de vous connecter.";
+  if (msg.includes("network") || msg.includes("fetch")) return "Problème de connexion. Vérifiez votre connexion internet.";
+  return "Une erreur est survenue. Veuillez réessayer.";
+}
+
+async function signUpWithEmail(email, password) {
+  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw new Error(authErrorMessage(error));
+  return data;
+}
+
+async function signInWithEmail(email, password) {
+  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new Error(authErrorMessage(error));
+  return data;
+}
+
+async function signInWithGoogle() {
+  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
+  if (error) throw new Error(authErrorMessage(error));
+}
+
+async function signOutUser() {
+  if (!supabase) return;
+  try { await supabase.auth.signOut(); } catch {}
+}
+
+// Retire cloudId (référence locale à la ligne Supabase) avant de stocker dans la colonne JSONB.
+function stripCloudId(project) {
+  const { cloudId, ...rest } = project;
+  return rest;
+}
+
+async function fetchCloudProjects(userId) {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from("projects").select("*").eq("user_id", userId);
+    if (error) throw error;
+    return (data || []).map(row => ({ ...row.data, cloudId: row.id }));
+  } catch {
+    return [];
+  }
+}
+
+async function insertCloudProject(project, userId) {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .insert({ user_id: userId, name: project.name, type: project.type, data: stripCloudId(project) })
+      .select()
+      .single();
+    if (error) throw error;
+    return data.id;
+  } catch {
+    return null;
+  }
+}
+
+// Sauvegarde en temps réel des projets cloud — échec réseau : fallback silencieux
+// (le localStorage, déjà à jour via persist(), reste la source de vérité locale).
+async function updateCloudProject(project) {
+  if (!supabase || !project.cloudId) return;
+  try {
+    await supabase
+      .from("projects")
+      .update({ name: project.name, type: project.type, data: stripCloudId(project), updated_at: new Date().toISOString() })
+      .eq("id", project.cloudId);
+  } catch {}
+}
+
+async function deleteCloudProject(cloudId) {
+  if (!supabase || !cloudId) return;
+  try {
+    await supabase.from("projects").delete().eq("id", cloudId);
+  } catch {}
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -1957,6 +2059,131 @@ function CozimoIcon({ size = 64 }) {
   );
 }
 
+function AuthModal({ onClose, defaultTab = "signup" }) {
+  const [tab, setTab] = useState(defaultTab);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const switchTab = (t) => {
+    setTab(t);
+    setError("");
+    setInfo("");
+  };
+
+  const submit = async () => {
+    setError("");
+    setInfo("");
+    if (!email.trim() || !password) {
+      setError("Merci de renseigner votre email et votre mot de passe.");
+      return;
+    }
+    if (tab === "signup" && password !== confirmPassword) {
+      setError("Les mots de passe ne correspondent pas.");
+      return;
+    }
+    setLoading(true);
+    try {
+      if (tab === "signup") {
+        const data = await signUpWithEmail(email.trim(), password);
+        if (data?.session) {
+          onClose();
+        } else {
+          setInfo("Compte créé ! Vérifiez votre email pour confirmer votre compte, puis connectez-vous.");
+        }
+      } else {
+        await signInWithEmail(email.trim(), password);
+        onClose();
+      }
+    } catch (e) {
+      setError(e.message || "Une erreur est survenue.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const google = async () => {
+    setError("");
+    setInfo("");
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setError(e.message || "Une erreur est survenue.");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex gap-1 mb-5 bg-slate-100 rounded-xl p-1">
+          <button onClick={() => switchTab("signup")}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signup" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+            Créer un compte
+          </button>
+          <button onClick={() => switchTab("signin")}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signin" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+            Se connecter
+          </button>
+        </div>
+        <div className="flex flex-col gap-3">
+          <Input label="Email" value={email} onChange={setEmail} type="email" placeholder="vous@exemple.fr" />
+          <Input label="Mot de passe" value={password} onChange={setPassword} type="password" placeholder="••••••••" />
+          {tab === "signup" && (
+            <Input label="Confirmer le mot de passe" value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="••••••••" />
+          )}
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          {info && <p className="text-xs text-emerald-600">{info}</p>}
+          <button onClick={submit} disabled={loading}
+            className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
+            {loading ? "…" : tab === "signup" ? "Créer mon compte" : "Se connecter"}
+          </button>
+          <div className="flex items-center gap-2 my-1">
+            <div className="flex-1 h-px bg-slate-200" />
+            <span className="text-xs text-slate-400">ou</span>
+            <div className="flex-1 h-px bg-slate-200" />
+          </div>
+          <button onClick={google}
+            className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all">
+            Continuer avec Google
+          </button>
+          <button onClick={onClose}
+            className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
+            Continuer sans compte
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MigrationModal({ count, onSync, onSkip, syncing }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}>
+      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5">
+        <h3 className="font-bold text-slate-800 text-base mb-2">☁️ Synchroniser vos projets ?</h3>
+        <p className="text-sm text-slate-600 leading-relaxed mb-5">
+          Nous avons trouvé {count} projet{count > 1 ? "s" : ""} {count > 1 ? "locaux" : "local"}. Voulez-vous les synchroniser avec votre compte ?
+        </p>
+        <div className="flex gap-2">
+          <button onClick={onSkip} disabled={syncing}
+            className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-500 text-sm font-semibold hover:bg-slate-50 transition-all disabled:opacity-50">
+            Non merci
+          </button>
+          <button onClick={onSync} disabled={syncing}
+            className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
+            {syncing ? "Synchronisation…" : "Synchroniser"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShareModal({ link, onClose }) {
   const [copied, setCopied] = useState(false);
   const copyLink = async () => {
@@ -2543,7 +2770,7 @@ function NewProjectDetailsScreen({ type, onCreate, onBack }) {
   );
 }
 
-function ProjectCard({ project, onOpen, menuOpen, onToggleMenu, onRename, onArchive, onDelete }) {
+function ProjectCard({ project, onOpen, menuOpen, onToggleMenu, onRename, onArchive, onDelete, showSyncBadge }) {
   const { done, total } = getProjectStepCount(project);
   const pct = total ? Math.round((done / total) * 100) : 0;
   const typeInfo = PROJECT_TYPES.find(t => t.id === project.type);
@@ -2559,7 +2786,17 @@ function ProjectCard({ project, onOpen, menuOpen, onToggleMenu, onRename, onArch
               </div>
               <div className="min-w-0">
                 <div className="font-bold text-slate-800 text-sm truncate">{project.name}</div>
-                <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+                <div className="flex items-center gap-1.5">
+                  <div className="text-xs text-slate-400">{typeInfo?.label}</div>
+                  {showSyncBadge && (
+                    <span
+                      className="text-xs font-semibold px-1.5 rounded-full flex-shrink-0"
+                      style={project.cloudId ? { background: "#dbeafe", color: "#1d4ed8" } : { background: "#f1f5f9", color: "#475569" }}
+                    >
+                      {project.cloudId ? "☁️ Cloud" : "💾 Local"}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
@@ -2648,7 +2885,28 @@ function ArchivedProjectCard({ project, onUnarchive }) {
   );
 }
 
-function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal, onRename, onArchive, onDelete }) {
+function AccountBanner({ onOpenAuth, onDismiss }) {
+  return (
+    <div className="px-5 py-3 flex items-center justify-between gap-3" style={{ background: "#1a1a2e" }}>
+      <p className="text-white text-xs flex-1">💾 Sauvegardez vos projets sur tous vos appareils</p>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <button onClick={onOpenAuth}
+          className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all">
+          Créer un compte
+        </button>
+        <button onClick={onDismiss}
+          className="text-slate-400 hover:text-white text-xs w-6 h-6 flex items-center justify-center transition-all">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectsScreen({
+  projects, onOpen, onCreate, onInspirations, onLegal, onRename, onArchive, onDelete,
+  user, showAccountBanner, onOpenAuth, onDismissBanner, onSignOut,
+}) {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [renamingProject, setRenamingProject] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -2665,13 +2923,28 @@ function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal, o
 
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }} onClick={closeMenu}>
+      {showAccountBanner && <AccountBanner onOpenAuth={() => onOpenAuth("signup")} onDismiss={onDismissBanner} />}
       <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px" }}>
-              <span style={{ fontSize: 20 }}>🏠</span>
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center justify-center flex-shrink-0" style={{ width: 40, height: 40, background: "#2563eb", borderRadius: "10px" }}>
+                <span style={{ fontSize: 20 }}>🏠</span>
+              </div>
+              <h1 className="text-2xl font-bold">Mes projets</h1>
             </div>
-            <h1 className="text-2xl font-bold">Mes projets</h1>
+            {user ? (
+              <div className="flex items-center gap-2 flex-shrink-0 mt-2">
+                <span className="text-xs text-slate-400 truncate max-w-[140px]">{user.email}</span>
+                <button onClick={onSignOut} className="text-xs text-slate-400 hover:text-white transition-all whitespace-nowrap">
+                  Se déconnecter
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => onOpenAuth("signin")} className="text-xs text-slate-400 hover:text-white transition-all flex-shrink-0 mt-2">
+                Se connecter
+              </button>
+            )}
           </div>
           <p className="text-slate-400 text-sm">{activeProjects.length} projet{activeProjects.length > 1 ? "s" : ""} en cours</p>
         </div>
@@ -2704,6 +2977,7 @@ function ProjectsScreen({ projects, onOpen, onCreate, onInspirations, onLegal, o
               onRename={() => { setRenamingProject(p); closeMenu(); }}
               onArchive={() => { onArchive(p.id); closeMenu(); }}
               onDelete={() => confirmDelete(p)}
+              showSyncBadge={!!user}
             />
           ))}
         </div>
@@ -4275,6 +4549,61 @@ export default function App() {
   const [inspirations, setInspirations] = useState([]);
   const [previousScreen, setPreviousScreen] = useState("new-type");
   const [sharedProject, setSharedProject] = useState(null);
+  const [user, setUser] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState("signup");
+  const [accountBannerDismissed, setAccountBannerDismissed] = useState(true);
+  const [migrationCandidates, setMigrationCandidates] = useState(null);
+  const [migrating, setMigrating] = useState(false);
+  const activeIdRef = useRef(null);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    try {
+      setAccountBannerDismissed(localStorage.getItem(ACCOUNT_BANNER_DISMISSED_KEY) === "true");
+    } catch {
+      setAccountBannerDismissed(false);
+    }
+  }, []);
+
+  const persist = useCallback((projs, active) => {
+    saveData({ projects: projs, activeId: active });
+  }, []);
+
+  // Auth optionnelle — reprend une session existante et réagit aux connexions/déconnexions
+  // (y compris le retour de redirection OAuth Google). N'affecte jamais le flux local.
+  const handleAuthenticated = async (authUser) => {
+    setUser({ id: authUser.id, email: authUser.email });
+    setAuthModalOpen(false);
+    const cloudProjects = await fetchCloudProjects(authUser.id);
+    setProjects(prev => {
+      const localOnly = prev.filter(p => !p.cloudId && !cloudProjects.some(cp => cp.id === p.id));
+      const merged = [...cloudProjects, ...localOnly];
+      persist(merged, activeIdRef.current);
+      if (localOnly.length > 0) setMigrationCandidates(localOnly);
+      return merged;
+    });
+  };
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      if (data?.session?.user) handleAuthenticated(data.session.user);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        handleAuthenticated(session.user);
+      } else if (event === "SIGNED_OUT") {
+        setUser(null);
+        setMigrationCandidates(null);
+      }
+    });
+    return () => sub?.subscription?.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const shareParam = new URLSearchParams(window.location.search).get("share");
@@ -4320,10 +4649,6 @@ export default function App() {
         return () => window.removeEventListener("load", register);
       }
     }
-  }, []);
-
-  const persist = useCallback((projs, active) => {
-    saveData({ projects: projs, activeId: active });
   }, []);
 
   const openProjectsList = () => setScreen("projects");
@@ -4386,6 +4711,16 @@ export default function App() {
     setActiveId(project.id);
     persist(next, project.id);
     setScreen("dashboard");
+    if (user) {
+      insertCloudProject(project, user.id).then(cloudId => {
+        if (!cloudId) return;
+        setProjects(prev => {
+          const updated = prev.map(p => (p.id === project.id ? { ...p, cloudId } : p));
+          persist(updated, activeIdRef.current);
+          return updated;
+        });
+      });
+    }
   };
 
   const openProject = (id) => {
@@ -4398,29 +4733,74 @@ export default function App() {
     const next = projects.map(p => (p.id === id ? { ...p, ...patch } : p));
     setProjects(next);
     persist(next, activeId);
+    const updated = next.find(p => p.id === id);
+    if (user && updated?.cloudId) updateCloudProject(updated);
   };
   const toggleArchiveProject = (id) => {
     const next = projects.map(p => (p.id === id ? { ...p, archived: !p.archived } : p));
     setProjects(next);
     persist(next, activeId);
+    const updated = next.find(p => p.id === id);
+    if (user && updated?.cloudId) updateCloudProject(updated);
   };
   const deleteProject = (id) => {
+    const target = projects.find(p => p.id === id);
     const next = projects.filter(p => p.id !== id);
     const nextActive = activeId === id ? null : activeId;
     setProjects(next);
     setActiveId(nextActive);
     persist(next, nextActive);
+    if (user && target?.cloudId) deleteCloudProject(target.cloudId);
   };
 
   const updateActiveProject = useCallback((updater) => {
     setProjects(prev => {
-      const next = prev.map(p => p.id === activeId ? updater(p) : p);
+      const next = prev.map(p => {
+        if (p.id !== activeId) return p;
+        const updated = updater(p);
+        if (user && updated.cloudId) updateCloudProject(updated);
+        return updated;
+      });
       persist(next, activeId);
       return next;
     });
-  }, [activeId, persist]);
+  }, [activeId, persist, user]);
 
   const activeProject = projects.find(p => p.id === activeId);
+
+  const openAuthModal = (tab) => {
+    setAuthModalTab(tab);
+    setAuthModalOpen(true);
+  };
+  const dismissAccountBanner = () => {
+    try { localStorage.setItem(ACCOUNT_BANNER_DISMISSED_KEY, "true"); } catch {}
+    setAccountBannerDismissed(true);
+  };
+  const handleSignOut = async () => {
+    await signOutUser();
+    setUser(null);
+    setMigrationCandidates(null);
+  };
+  const syncMigration = async () => {
+    if (!user || !migrationCandidates) return;
+    setMigrating(true);
+    const updates = [];
+    for (const p of migrationCandidates) {
+      const cloudId = await insertCloudProject(p, user.id);
+      if (cloudId) updates.push({ id: p.id, cloudId });
+    }
+    setProjects(prev => {
+      const next = prev.map(p => {
+        const found = updates.find(u => u.id === p.id);
+        return found ? { ...p, cloudId: found.cloudId } : p;
+      });
+      persist(next, activeIdRef.current);
+      return next;
+    });
+    setMigrating(false);
+    setMigrationCandidates(null);
+  };
+  const skipMigration = () => setMigrationCandidates(null);
 
   const exitSharedMode = () => {
     if (typeof window !== "undefined" && window.history?.replaceState) {
@@ -4472,6 +4852,11 @@ export default function App() {
         onRename={renameProject}
         onArchive={toggleArchiveProject}
         onDelete={deleteProject}
+        user={user}
+        showAccountBanner={!user && !accountBannerDismissed}
+        onOpenAuth={openAuthModal}
+        onDismissBanner={dismissAccountBanner}
+        onSignOut={handleSignOut}
       />
     );
   }
@@ -4483,6 +4868,15 @@ export default function App() {
         * { font-family: 'Outfit', sans-serif; }
       `}</style>
       {content}
+      {authModalOpen && <AuthModal defaultTab={authModalTab} onClose={() => setAuthModalOpen(false)} />}
+      {migrationCandidates && (
+        <MigrationModal
+          count={migrationCandidates.length}
+          syncing={migrating}
+          onSync={syncMigration}
+          onSkip={skipMigration}
+        />
+      )}
     </>
   );
 }
