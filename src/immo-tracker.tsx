@@ -204,10 +204,26 @@ async function signInWithEmail(email, password) {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     console.error("[Supabase][auth] signIn ÉCHEC :", error);
-    throw new Error(authErrorMessage(error));
+    const err = new Error(authErrorMessage(error));
+    err.code = error.code;
+    throw err;
   }
   console.log("[Supabase][auth] signIn OK →", { userId: data?.user?.id });
   return data;
+}
+
+async function sendPasswordResetEmail(email) {
+  console.log("[Supabase][auth] resetPasswordForEmail →", email);
+  if (!supabase) {
+    console.error("[Supabase][auth] resetPasswordForEmail annulé : client non configuré.");
+    throw new Error("Service d'authentification non configuré.");
+  }
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: "https://cozimo.fr" });
+  if (error) {
+    console.error("[Supabase][auth] resetPasswordForEmail ÉCHEC :", error);
+    throw new Error(authErrorMessage(error));
+  }
+  console.log("[Supabase][auth] resetPasswordForEmail OK →", email);
 }
 
 // Bouton "Continuer avec Google" retiré temporairement de AuthModal (réintégration prévue en V2.5) —
@@ -2181,16 +2197,33 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
+  const [invalidCredentials, setInvalidCredentials] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [resetInfo, setResetInfo] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
   const switchTab = (t) => {
     setTab(t);
     setError("");
     setInfo("");
+    setInvalidCredentials(false);
+  };
+
+  const changeEmail = (v) => {
+    setEmail(v);
+    setInvalidCredentials(false);
+  };
+  const changePassword = (v) => {
+    setPassword(v);
+    setInvalidCredentials(false);
   };
 
   const submit = async () => {
     setError("");
     setInfo("");
+    setInvalidCredentials(false);
     if (!email.trim() || !password) {
       setError("Merci de renseigner votre email et votre mot de passe.");
       return;
@@ -2214,8 +2247,39 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
       }
     } catch (e) {
       setError(e.message || "Une erreur est survenue.");
+      setInvalidCredentials(e.code === "invalid_credentials");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openResetMode = () => {
+    setResetMode(true);
+    setResetEmail(email);
+    setResetError("");
+    setResetInfo("");
+  };
+  const closeResetMode = () => {
+    setResetMode(false);
+    setResetError("");
+    setResetInfo("");
+  };
+
+  const sendResetLink = async () => {
+    setResetError("");
+    setResetInfo("");
+    if (!resetEmail.trim()) {
+      setResetError("Merci de renseigner votre email.");
+      return;
+    }
+    setResetLoading(true);
+    try {
+      await sendPasswordResetEmail(resetEmail.trim());
+      setResetInfo("Un lien de réinitialisation a été envoyé à votre adresse email.");
+    } catch (e) {
+      setResetError(e.message || "Une erreur est survenue.");
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -2223,33 +2287,58 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5" onClick={e => e.stopPropagation()}>
-        <div className="flex gap-1 mb-5 bg-slate-100 rounded-xl p-1">
-          <button onClick={() => switchTab("signup")}
-            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signup" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
-            Créer un compte
-          </button>
-          <button onClick={() => switchTab("signin")}
-            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signin" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
-            Se connecter
-          </button>
-        </div>
-        <div className="flex flex-col gap-3">
-          <Input label="Email" value={email} onChange={setEmail} type="email" placeholder="vous@exemple.fr" />
-          <Input label="Mot de passe" value={password} onChange={setPassword} type="password" placeholder="••••••••" />
-          {tab === "signup" && (
-            <Input label="Confirmer le mot de passe" value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="••••••••" />
-          )}
-          {error && <p className="text-xs text-red-500">{error}</p>}
-          {info && <p className="text-xs text-emerald-600">{info}</p>}
-          <button onClick={submit} disabled={loading}
-            className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
-            {loading ? "…" : tab === "signup" ? "Créer mon compte" : "Se connecter"}
-          </button>
-          <button onClick={onClose}
-            className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
-            Continuer sans compte
-          </button>
-        </div>
+        {resetMode ? (
+          <div className="flex flex-col gap-3">
+            <h3 className="font-bold text-slate-800 text-sm mb-1">Réinitialiser le mot de passe</h3>
+            <Input label="Email" value={resetEmail} onChange={setResetEmail} type="email" placeholder="vous@exemple.fr" />
+            {resetError && <p className="text-xs text-red-500">{resetError}</p>}
+            {resetInfo && <p className="text-xs text-emerald-600">{resetInfo}</p>}
+            <button onClick={sendResetLink} disabled={resetLoading}
+              className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
+              {resetLoading ? "…" : "Envoyer le lien de réinitialisation"}
+            </button>
+            <button onClick={closeResetMode}
+              className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
+              ← Retour
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-1 mb-5 bg-slate-100 rounded-xl p-1">
+              <button onClick={() => switchTab("signup")}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signup" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+                Créer un compte
+              </button>
+              <button onClick={() => switchTab("signin")}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${tab === "signin" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>
+                Se connecter
+              </button>
+            </div>
+            <div className="flex flex-col gap-3">
+              <Input label="Email" value={email} onChange={changeEmail} type="email" placeholder="vous@exemple.fr" error={invalidCredentials} />
+              <Input label="Mot de passe" value={password} onChange={changePassword} type="password" placeholder="••••••••" error={invalidCredentials} />
+              {tab === "signin" && (
+                <button type="button" onClick={openResetMode}
+                  className="text-xs text-blue-600 hover:underline self-end -mt-2">
+                  Mot de passe oublié ?
+                </button>
+              )}
+              {tab === "signup" && (
+                <Input label="Confirmer le mot de passe" value={confirmPassword} onChange={setConfirmPassword} type="password" placeholder="••••••••" />
+              )}
+              {error && <p className="text-xs text-red-500">{error}</p>}
+              {info && <p className="text-xs text-emerald-600">{info}</p>}
+              <button onClick={submit} disabled={loading}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
+                {loading ? "…" : tab === "signup" ? "Créer mon compte" : "Se connecter"}
+              </button>
+              <button onClick={onClose}
+                className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
+                Continuer sans compte
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -2574,11 +2663,11 @@ function Card({ children, className = "" }) {
   );
 }
 
-function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder, hint }) {
+function Input({ label, value, onChange, type = "text", suffix, prefix, placeholder, hint, error }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
-      <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white">
+      <div className={`flex items-center border rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white ${error ? "border-red-500" : "border-slate-200"}`}>
         {prefix && <span className="px-3 text-slate-400 text-sm bg-slate-50 border-r border-slate-200 py-2.5">{prefix}</span>}
         <input
           type={type}
