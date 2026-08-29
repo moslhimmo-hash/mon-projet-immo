@@ -136,6 +136,8 @@ async function signInWithEmail(email, password) {
   return data;
 }
 
+// Bouton "Continuer avec Google" retiré temporairement de AuthModal (réintégration prévue en V2.5) —
+// la fonction reste prête à être rebranchée.
 async function signInWithGoogle() {
   if (!supabase) throw new Error("Service d'authentification non configuré.");
   const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
@@ -2105,16 +2107,6 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
     }
   };
 
-  const google = async () => {
-    setError("");
-    setInfo("");
-    try {
-      await signInWithGoogle();
-    } catch (e) {
-      setError(e.message || "Une erreur est survenue.");
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
@@ -2140,15 +2132,6 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
           <button onClick={submit} disabled={loading}
             className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
             {loading ? "…" : tab === "signup" ? "Créer mon compte" : "Se connecter"}
-          </button>
-          <div className="flex items-center gap-2 my-1">
-            <div className="flex-1 h-px bg-slate-200" />
-            <span className="text-xs text-slate-400">ou</span>
-            <div className="flex-1 h-px bg-slate-200" />
-          </div>
-          <button onClick={google}
-            className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all">
-            Continuer avec Google
           </button>
           <button onClick={onClose}
             className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
@@ -2905,7 +2888,7 @@ function AccountBanner({ onOpenAuth, onDismiss }) {
 
 function ProjectsScreen({
   projects, onOpen, onCreate, onInspirations, onLegal, onRename, onArchive, onDelete,
-  user, showAccountBanner, onOpenAuth, onDismissBanner, onSignOut,
+  user, onOpenAuth, onSignOut,
 }) {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [renamingProject, setRenamingProject] = useState(null);
@@ -2923,7 +2906,6 @@ function ProjectsScreen({
 
   return (
     <div className="min-h-screen" style={{ background: "#f8f7f5" }} onClick={closeMenu}>
-      {showAccountBanner && <AccountBanner onOpenAuth={() => onOpenAuth("signup")} onDismiss={onDismissBanner} />}
       <div className="text-white px-5 pt-8 pb-12" style={{ background: "#1a1a2e" }}>
         <div className="max-w-2xl mx-auto">
           <div className="flex items-start justify-between gap-3 mb-2">
@@ -4853,13 +4835,17 @@ export default function App() {
         onArchive={toggleArchiveProject}
         onDelete={deleteProject}
         user={user}
-        showAccountBanner={!user && !accountBannerDismissed}
         onOpenAuth={openAuthModal}
-        onDismissBanner={dismissAccountBanner}
         onSignOut={handleSignOut}
       />
     );
   }
+
+  // Bandeau "Créer un compte" — persiste sur toute la navigation (accueil, mes
+  // projets, dashboard, etc.) tant que non connecté et non fermé. Masqué sur les
+  // écrans techniques/transitoires (chargement, onboarding) et la vue "lecture
+  // seule" d'un visiteur externe (screen "shared", pas le propriétaire du projet).
+  const showAccountBanner = !user && !accountBannerDismissed && !["loading", "onboarding", "shared"].includes(screen);
 
   return (
     <>
@@ -4867,6 +4853,7 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
         * { font-family: 'Outfit', sans-serif; }
       `}</style>
+      {showAccountBanner && <AccountBanner onOpenAuth={() => openAuthModal("signup")} onDismiss={dismissAccountBanner} />}
       {content}
       {authModalOpen && <AuthModal defaultTab={authModalTab} onClose={() => setAuthModalOpen(false)} />}
       {migrationCandidates && (
