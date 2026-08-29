@@ -244,7 +244,7 @@ function stripCloudId(project) {
 }
 
 async function fetchCloudProjects(userId) {
-  console.log("[Supabase][projects] fetchCloudProjects →", userId);
+  console.log(`[Supabase][projects] fetchCloudProjects → userId utilisé pour CHARGER = "${userId}" (table projects, filtre user_id = eq.${userId})`);
   if (!supabase) {
     console.warn("[Supabase][projects] fetchCloudProjects annulé : client non configuré.");
     return [];
@@ -252,7 +252,8 @@ async function fetchCloudProjects(userId) {
   try {
     const { data, error } = await supabase.from("projects").select("*").eq("user_id", userId);
     if (error) throw error;
-    console.log(`[Supabase][projects] fetchCloudProjects OK → ${data?.length || 0} projet(s)`);
+    console.log(`[Supabase][projects] fetchCloudProjects OK → ${data?.length || 0} ligne(s) reçue(s) de Supabase :`,
+      (data || []).map(row => ({ rowId: row.id, name: row.name, user_id: row.user_id, matchUserId: row.user_id === userId })));
     return (data || []).map(row => ({ ...row.data, cloudId: row.id }));
   } catch (e) {
     console.error("[Supabase][projects] fetchCloudProjects ÉCHEC (fallback : aucun projet cloud chargé) :", e);
@@ -261,7 +262,7 @@ async function fetchCloudProjects(userId) {
 }
 
 async function insertCloudProject(project, userId) {
-  console.log("[Supabase][projects] insertCloudProject →", { name: project.name, type: project.type, userId });
+  console.log(`[Supabase][projects] insertCloudProject → userId utilisé pour SAUVEGARDER = "${userId}"`, { name: project.name, type: project.type });
   if (!supabase) {
     console.warn("[Supabase][projects] insertCloudProject annulé : client non configuré.");
     return null;
@@ -273,7 +274,7 @@ async function insertCloudProject(project, userId) {
       .select()
       .single();
     if (error) throw error;
-    console.log("[Supabase][projects] insertCloudProject OK → cloudId =", data.id);
+    console.log("[Supabase][projects] insertCloudProject OK →", { cloudId: data.id, user_id_enregistré: data.user_id });
     return data.id;
   } catch (e) {
     console.error("[Supabase][projects] insertCloudProject ÉCHEC (le projet reste local uniquement) :", e);
@@ -4666,20 +4667,29 @@ export default function App() {
     saveData({ projects: projs, activeId: active });
   }, []);
 
-  // Auth optionnelle — reprend une session existante et réagit aux connexions/déconnexions
-  // (y compris le retour de redirection OAuth Google). N'affecte jamais le flux local.
-  const handleAuthenticated = async (authUser) => {
-    console.log("[Supabase][app] Utilisateur authentifié →", { userId: authUser.id, email: authUser.email });
+  // Auth optionnelle — réagit aux connexions/déconnexions qui arrivent APRÈS le montage
+  // (login explicite via la modale, retour de redirection OAuth Google, déconnexion).
+  // La session déjà existante au tout premier chargement est gérée séparément dans
+  // l'effet d'initialisation ci-dessous, dans la MÊME chaîne async que le chargement
+  // local — jamais dans un effet séparé, pour éviter la course entre "charger le
+  // local" et "fusionner le cloud" qui faisait disparaître les projets cloud à la
+  // reconnexion (le chargement local, résolu en second, écrasait sans le savoir
+  // l'état déjà fusionné par le cloud).
+  const handleAuthenticated = async (authUser, source = "événement auth") => {
+    console.log(`[Supabase][app] handleAuthenticated (${source}) → userId=${authUser.id} email=${authUser.email}`);
     setUser({ id: authUser.id, email: authUser.email });
     setAuthModalOpen(false);
     const cloudProjects = await fetchCloudProjects(authUser.id);
     setProjects(prev => {
+      console.log("[Supabase][app] AVANT fusion → projets locaux actuels en mémoire :",
+        prev.map(p => ({ id: p.id, name: p.name, cloudId: p.cloudId || null })));
       const localOnly = prev.filter(p => !p.cloudId && !cloudProjects.some(cp => cp.id === p.id));
       const merged = [...cloudProjects, ...localOnly];
-      console.log("[Supabase][app] Fusion projets →", {
-        cloud: cloudProjects.length,
-        localSeulement: localOnly.length,
-        total: merged.length,
+      console.log("[Supabase][app] APRÈS fusion →", {
+        cloudReçusDeSupabase: cloudProjects.length,
+        localSeulementConservés: localOnly.length,
+        totalAffiché: merged.length,
+        projets: merged.map(p => ({ id: p.id, name: p.name, cloudId: p.cloudId || null })),
       });
       persist(merged, activeIdRef.current);
       if (localOnly.length > 0) setMigrationCandidates(localOnly);
@@ -4689,21 +4699,17 @@ export default function App() {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => {
-      console.log("[Supabase][app] Session existante au chargement ? →", !!data?.session);
-      if (data?.session?.user) handleAuthenticated(data.session.user);
-    });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[Supabase][app] onAuthStateChange →", event);
       if (event === "SIGNED_IN" && session?.user) {
-        handleAuthenticated(session.user);
+        handleAuthenticated(session.user, "onAuthStateChange SIGNED_IN");
       } else if (event === "SIGNED_OUT") {
+        console.log("[Supabase][app] SIGNED_OUT → réinitialisation de l'utilisateur en mémoire.");
         setUser(null);
         setMigrationCandidates(null);
       }
     });
     return () => sub?.subscription?.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -4717,19 +4723,50 @@ export default function App() {
         sharedOk = true;
       }
     }
-    Promise.all([loadData(), loadOnboardingDone()]).then(([d, onboardingDone]) => {
-      const projs = d?.projects || [];
+
+    async function init() {
+      const [d, onboardingDone] = await Promise.all([loadData(), loadOnboardingDone()]);
       const activeIdLoaded = d?.activeId || null;
       setActiveId(activeIdLoaded);
-      if (!sharedOk) {
-        setScreen(!onboardingDone ? "onboarding" : (projs.length > 0 ? "projects" : "new-type"));
-      }
 
       // Vérifie les échéances au chargement de l'app et notifie si nécessaire.
-      const { changed, projects: checked } = checkDeadlineNotifications(projs);
-      setProjects(checked);
-      if (changed) saveData({ projects: checked, activeId: activeIdLoaded });
-    });
+      const { projects: checked } = checkDeadlineNotifications(d?.projects || []);
+      let finalProjects = checked;
+      console.log("[Supabase][app] 1/3 — Chargement local terminé →",
+        finalProjects.map(p => ({ id: p.id, name: p.name, cloudId: p.cloudId || null })));
+
+      // Fusion cloud faite ICI, dans la continuité directe du chargement local (pas
+      // dans un effet séparé) : impossible qu'un chargement local tardif écrase le résultat.
+      if (supabase) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        console.log("[Supabase][app] 2/3 — Session existante au démarrage ? →", !!sessionData?.session);
+        if (sessionData?.session?.user) {
+          const authUser = sessionData.session.user;
+          console.log(`[Supabase][app] LOGIN (session reprise) → userId utilisé pour CHARGER les projets = ${authUser.id} (email: ${authUser.email})`);
+          setUser({ id: authUser.id, email: authUser.email });
+          const cloudProjects = await fetchCloudProjects(authUser.id);
+          const localOnly = finalProjects.filter(p => !p.cloudId && !cloudProjects.some(cp => cp.id === p.id));
+          finalProjects = [...cloudProjects, ...localOnly];
+          console.log("[Supabase][app] 3/3 — Fusion démarrage →", {
+            cloudReçusDeSupabase: cloudProjects.length,
+            localSeulementConservés: localOnly.length,
+            totalAffiché: finalProjects.length,
+            projets: finalProjects.map(p => ({ id: p.id, name: p.name, cloudId: p.cloudId || null })),
+          });
+          if (localOnly.length > 0) setMigrationCandidates(localOnly);
+        }
+      }
+
+      setProjects(finalProjects);
+      persist(finalProjects, activeIdLoaded);
+      console.log("[Supabase][app] État final posé à l'écran →", finalProjects.length, "projet(s).");
+
+      if (!sharedOk) {
+        setScreen(!onboardingDone ? "onboarding" : (finalProjects.length > 0 ? "projects" : "new-type"));
+      }
+    }
+    init();
+
     loadInspirations().then(setInspirations);
   }, []);
 
