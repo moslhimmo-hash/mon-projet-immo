@@ -105,17 +105,75 @@ function decodeShareData(encoded) {
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 
+// Décode le payload d'un JWT Supabase (legacy anon/service_role) pour en lire le
+// "role" sans dépendance — renvoie null pour les nouvelles clés sb_publishable_/sb_secret_
+// (qui ne sont pas des JWT) ou tout autre format non reconnu.
+function decodeSupabaseKeyRole(key) {
+  try {
+    const parts = key.split(".");
+    if (parts.length !== 3) return null;
+    let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const payload = JSON.parse(atob(b64));
+    return payload.role || null;
+  } catch {
+    return null;
+  }
+}
+
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+// Diagnostic au démarrage — aide à repérer immédiatement une clé mal configurée
+// (service_role au lieu d'anon, clé secret côté client, etc.) plutôt que de
+// découvrir le problème après coup via des échecs de synchronisation silencieux.
+if (supabase) {
+  const keyRole = decodeSupabaseKeyRole(SUPABASE_ANON_KEY);
+  let keyFormat = "inconnu";
+  if (SUPABASE_ANON_KEY.startsWith("sb_publishable_")) keyFormat = "publishable (nouveau format)";
+  else if (SUPABASE_ANON_KEY.startsWith("sb_secret_")) keyFormat = "secret (nouveau format)";
+  else if (keyRole) keyFormat = `JWT legacy — role="${keyRole}"`;
+  console.log("[Supabase] Client initialisé.", { url: SUPABASE_URL, keyFormat });
+  if (keyRole === "service_role") {
+    console.error(
+      "[Supabase] ⚠️ EXPO_PUBLIC_SUPABASE_ANON_KEY contient une clé service_role, pas anon ! " +
+      "Cette clé contourne toute la sécurité RLS et ne doit JAMAIS être exposée côté client. " +
+      "Dans Supabase → Project Settings → API : utilisez soit la clé \"anon public\" de l'onglet " +
+      "\"Legacy anon, service_role API keys\", soit la clé \"publishable\" (sb_publishable_...) du nouvel onglet API Keys."
+    );
+  } else if (SUPABASE_ANON_KEY.startsWith("sb_secret_")) {
+    console.error(
+      "[Supabase] ⚠️ EXPO_PUBLIC_SUPABASE_ANON_KEY contient une clé secret (sb_secret_...) — jamais côté client ! " +
+      "Utilisez la clé publishable (sb_publishable_...) à la place."
+    );
+  }
+} else {
+  console.warn("[Supabase] Non configuré (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY manquants) — mode local uniquement.");
+}
 
 const ACCOUNT_BANNER_DISMISSED_KEY = "cozimo-account-banner-dismissed";
 
+// Priorité aux codes d'erreur stables de Supabase (error.code) plutôt qu'au texte du
+// message (error.message), qui peut changer de formulation. Voir la référence :
+// https://supabase.com/docs/guides/auth/debugging/error-codes
 function authErrorMessage(error) {
+  const code = error?.code || "";
   const msg = error?.message || "";
+  if (code === "invalid_credentials") return "Email ou mot de passe incorrect.";
+  if (code === "user_already_exists") return "Un compte existe déjà avec cet email.";
+  if (code === "weak_password") return "Le mot de passe doit contenir au moins 6 caractères.";
+  if (code === "email_address_invalid") return "Adresse email invalide.";
+  if (code === "email_not_confirmed") return "Merci de confirmer votre email avant de vous connecter.";
+  if (code === "over_email_send_rate_limit") return "Trop de tentatives récentes. Merci de réessayer dans quelques minutes.";
+  if (code === "over_request_rate_limit") return "Trop de tentatives. Merci de réessayer dans quelques minutes.";
+  if (code === "signup_disabled") return "Les inscriptions sont actuellement désactivées.";
+  if (code === "user_banned") return "Ce compte est temporairement bloqué.";
+  // Filet de sécurité si Supabase ne renvoie pas de code (anciennes versions, erreurs réseau…).
   if (msg.includes("Invalid login credentials")) return "Email ou mot de passe incorrect.";
   if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("User already registered")) {
     return "Un compte existe déjà avec cet email.";
   }
   if (msg.includes("Password should be at least")) return "Le mot de passe doit contenir au moins 6 caractères.";
+  if (msg.includes("rate limit")) return "Trop de tentatives récentes. Merci de réessayer dans quelques minutes.";
   if (msg.includes("Unable to validate email") || msg.includes("invalid")) return "Adresse email invalide.";
   if (msg.includes("Email not confirmed")) return "Merci de confirmer votre email avant de vous connecter.";
   if (msg.includes("network") || msg.includes("fetch")) return "Problème de connexion. Vérifiez votre connexion internet.";
@@ -123,30 +181,60 @@ function authErrorMessage(error) {
 }
 
 async function signUpWithEmail(email, password) {
-  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  console.log("[Supabase][auth] signUp →", email);
+  if (!supabase) {
+    console.error("[Supabase][auth] signUp annulé : client non configuré (voir avertissement au démarrage).");
+    throw new Error("Service d'authentification non configuré.");
+  }
   const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error) throw new Error(authErrorMessage(error));
+  if (error) {
+    console.error("[Supabase][auth] signUp ÉCHEC :", error);
+    throw new Error(authErrorMessage(error));
+  }
+  console.log("[Supabase][auth] signUp OK →", { userId: data?.user?.id, hasSession: !!data?.session });
   return data;
 }
 
 async function signInWithEmail(email, password) {
-  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  console.log("[Supabase][auth] signIn →", email);
+  if (!supabase) {
+    console.error("[Supabase][auth] signIn annulé : client non configuré (voir avertissement au démarrage).");
+    throw new Error("Service d'authentification non configuré.");
+  }
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(authErrorMessage(error));
+  if (error) {
+    console.error("[Supabase][auth] signIn ÉCHEC :", error);
+    throw new Error(authErrorMessage(error));
+  }
+  console.log("[Supabase][auth] signIn OK →", { userId: data?.user?.id });
   return data;
 }
 
 // Bouton "Continuer avec Google" retiré temporairement de AuthModal (réintégration prévue en V2.5) —
 // la fonction reste prête à être rebranchée.
 async function signInWithGoogle() {
-  if (!supabase) throw new Error("Service d'authentification non configuré.");
+  console.log("[Supabase][auth] signInWithGoogle →");
+  if (!supabase) {
+    console.error("[Supabase][auth] signInWithGoogle annulé : client non configuré.");
+    throw new Error("Service d'authentification non configuré.");
+  }
   const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
-  if (error) throw new Error(authErrorMessage(error));
+  if (error) {
+    console.error("[Supabase][auth] signInWithGoogle ÉCHEC :", error);
+    throw new Error(authErrorMessage(error));
+  }
 }
 
 async function signOutUser() {
   if (!supabase) return;
-  try { await supabase.auth.signOut(); } catch {}
+  console.log("[Supabase][auth] signOut →");
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("[Supabase][auth] signOut ÉCHEC :", error);
+    else console.log("[Supabase][auth] signOut OK");
+  } catch (e) {
+    console.error("[Supabase][auth] signOut EXCEPTION :", e);
+  }
 }
 
 // Retire cloudId (référence locale à la ligne Supabase) avant de stocker dans la colonne JSONB.
@@ -156,18 +244,28 @@ function stripCloudId(project) {
 }
 
 async function fetchCloudProjects(userId) {
-  if (!supabase) return [];
+  console.log("[Supabase][projects] fetchCloudProjects →", userId);
+  if (!supabase) {
+    console.warn("[Supabase][projects] fetchCloudProjects annulé : client non configuré.");
+    return [];
+  }
   try {
     const { data, error } = await supabase.from("projects").select("*").eq("user_id", userId);
     if (error) throw error;
+    console.log(`[Supabase][projects] fetchCloudProjects OK → ${data?.length || 0} projet(s)`);
     return (data || []).map(row => ({ ...row.data, cloudId: row.id }));
-  } catch {
+  } catch (e) {
+    console.error("[Supabase][projects] fetchCloudProjects ÉCHEC (fallback : aucun projet cloud chargé) :", e);
     return [];
   }
 }
 
 async function insertCloudProject(project, userId) {
-  if (!supabase) return null;
+  console.log("[Supabase][projects] insertCloudProject →", { name: project.name, type: project.type, userId });
+  if (!supabase) {
+    console.warn("[Supabase][projects] insertCloudProject annulé : client non configuré.");
+    return null;
+  }
   try {
     const { data, error } = await supabase
       .from("projects")
@@ -175,29 +273,42 @@ async function insertCloudProject(project, userId) {
       .select()
       .single();
     if (error) throw error;
+    console.log("[Supabase][projects] insertCloudProject OK → cloudId =", data.id);
     return data.id;
-  } catch {
+  } catch (e) {
+    console.error("[Supabase][projects] insertCloudProject ÉCHEC (le projet reste local uniquement) :", e);
     return null;
   }
 }
 
-// Sauvegarde en temps réel des projets cloud — échec réseau : fallback silencieux
-// (le localStorage, déjà à jour via persist(), reste la source de vérité locale).
+// Sauvegarde en temps réel des projets cloud — échec réseau : fallback silencieux côté UI
+// (le localStorage, déjà à jour via persist(), reste la source de vérité locale), mais
+// l'erreur est toujours loguée pour rester diagnosticable.
 async function updateCloudProject(project) {
   if (!supabase || !project.cloudId) return;
+  console.log("[Supabase][projects] updateCloudProject →", { cloudId: project.cloudId, name: project.name });
   try {
-    await supabase
+    const { error } = await supabase
       .from("projects")
       .update({ name: project.name, type: project.type, data: stripCloudId(project), updated_at: new Date().toISOString() })
       .eq("id", project.cloudId);
-  } catch {}
+    if (error) throw error;
+    console.log("[Supabase][projects] updateCloudProject OK → cloudId =", project.cloudId);
+  } catch (e) {
+    console.error("[Supabase][projects] updateCloudProject ÉCHEC (fallback localStorage) :", e);
+  }
 }
 
 async function deleteCloudProject(cloudId) {
   if (!supabase || !cloudId) return;
+  console.log("[Supabase][projects] deleteCloudProject →", cloudId);
   try {
-    await supabase.from("projects").delete().eq("id", cloudId);
-  } catch {}
+    const { error } = await supabase.from("projects").delete().eq("id", cloudId);
+    if (error) throw error;
+    console.log("[Supabase][projects] deleteCloudProject OK →", cloudId);
+  } catch (e) {
+    console.error("[Supabase][projects] deleteCloudProject ÉCHEC :", e);
+  }
 }
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -4558,12 +4669,18 @@ export default function App() {
   // Auth optionnelle — reprend une session existante et réagit aux connexions/déconnexions
   // (y compris le retour de redirection OAuth Google). N'affecte jamais le flux local.
   const handleAuthenticated = async (authUser) => {
+    console.log("[Supabase][app] Utilisateur authentifié →", { userId: authUser.id, email: authUser.email });
     setUser({ id: authUser.id, email: authUser.email });
     setAuthModalOpen(false);
     const cloudProjects = await fetchCloudProjects(authUser.id);
     setProjects(prev => {
       const localOnly = prev.filter(p => !p.cloudId && !cloudProjects.some(cp => cp.id === p.id));
       const merged = [...cloudProjects, ...localOnly];
+      console.log("[Supabase][app] Fusion projets →", {
+        cloud: cloudProjects.length,
+        localSeulement: localOnly.length,
+        total: merged.length,
+      });
       persist(merged, activeIdRef.current);
       if (localOnly.length > 0) setMigrationCandidates(localOnly);
       return merged;
@@ -4573,9 +4690,11 @@ export default function App() {
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => {
+      console.log("[Supabase][app] Session existante au chargement ? →", !!data?.session);
       if (data?.session?.user) handleAuthenticated(data.session.user);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[Supabase][app] onAuthStateChange →", event);
       if (event === "SIGNED_IN" && session?.user) {
         handleAuthenticated(session.user);
       } else if (event === "SIGNED_OUT") {
@@ -4694,14 +4813,21 @@ export default function App() {
     persist(next, project.id);
     setScreen("dashboard");
     if (user) {
+      console.log("[Supabase][app] Nouveau projet créé en étant connecté → envoi vers le cloud…", project.name);
       insertCloudProject(project, user.id).then(cloudId => {
-        if (!cloudId) return;
+        if (!cloudId) {
+          console.warn("[Supabase][app] Le nouveau projet reste local uniquement (échec de l'envoi cloud — voir logs ci-dessus).");
+          return;
+        }
+        console.log("[Supabase][app] Nouveau projet rattaché au cloud →", { projectId: project.id, cloudId });
         setProjects(prev => {
           const updated = prev.map(p => (p.id === project.id ? { ...p, cloudId } : p));
           persist(updated, activeIdRef.current);
           return updated;
         });
       });
+    } else {
+      console.log("[Supabase][app] Nouveau projet créé hors connexion → local uniquement.", project.name);
     }
   };
 
@@ -4765,12 +4891,14 @@ export default function App() {
   };
   const syncMigration = async () => {
     if (!user || !migrationCandidates) return;
+    console.log(`[Supabase][app] Migration → envoi de ${migrationCandidates.length} projet(s) local/aux vers le cloud…`);
     setMigrating(true);
     const updates = [];
     for (const p of migrationCandidates) {
       const cloudId = await insertCloudProject(p, user.id);
       if (cloudId) updates.push({ id: p.id, cloudId });
     }
+    console.log(`[Supabase][app] Migration terminée → ${updates.length}/${migrationCandidates.length} projet(s) synchronisé(s).`);
     setProjects(prev => {
       const next = prev.map(p => {
         const found = updates.find(u => u.id === p.id);
