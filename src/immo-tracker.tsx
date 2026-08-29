@@ -4697,6 +4697,24 @@ export default function App() {
     });
   };
 
+  // Déconnexion — les projets cloud (identifiés par cloudId) doivent disparaître de
+  // l'écran et du localStorage : sans session, on ne peut plus les synchroniser, et
+  // les garder affichés donnerait l'illusion qu'ils sont toujours accessibles/à jour.
+  // Seuls les projets réellement locaux (jamais synchronisés, pas de cloudId) restent.
+  const clearCloudProjectsFromMemory = (reason) => {
+    setProjects(prev => {
+      const cloudCount = prev.filter(p => p.cloudId).length;
+      const localOnly = prev.filter(p => !p.cloudId);
+      console.log(`[Supabase][app] Déconnexion (${reason}) → retrait des projets cloud de la mémoire.`, {
+        avantTotal: prev.length,
+        projetsCloudRetirés: cloudCount,
+        projetsLocauxConservés: localOnly.length,
+      });
+      persist(localOnly, activeIdRef.current);
+      return localOnly;
+    });
+  };
+
   useEffect(() => {
     if (!supabase) return;
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
@@ -4707,6 +4725,7 @@ export default function App() {
         console.log("[Supabase][app] SIGNED_OUT → réinitialisation de l'utilisateur en mémoire.");
         setUser(null);
         setMigrationCandidates(null);
+        clearCloudProjectsFromMemory("onAuthStateChange SIGNED_OUT");
       }
     });
     return () => sub?.subscription?.unsubscribe();
@@ -4925,6 +4944,7 @@ export default function App() {
     await signOutUser();
     setUser(null);
     setMigrationCandidates(null);
+    clearCloudProjectsFromMemory("bouton Se déconnecter");
   };
   const syncMigration = async () => {
     if (!user || !migrationCandidates) return;
