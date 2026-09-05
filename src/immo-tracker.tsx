@@ -1353,18 +1353,23 @@ const REGIME_FISCAL_OPTIONS = [
 ];
 
 const BUDGET_SECTIONS = {
-  financement: {
-    id: "financement", title: "Financement", icon: "💰", defaultOpen: false,
-    // Rendu par un composant dédié (FinancementSectionCard) plutôt que le mapping
+  "ce-que-jai": {
+    id: "ce-que-jai", title: "Ce que j'ai", icon: "💰", defaultOpen: false,
+    // Rendu par un composant dédié (CeQueJaiSectionCard) plutôt que le mapping
     // générique de champs — ce tableau reste la source de vérité pour l'export PDF.
     fields: [
-      { key: "revenusNetsMensuels", label: "Revenus nets mensuels du foyer (avant impôts)", suffix: "€/mois" },
-      { key: "capaciteEmpruntEstimee", label: "Capacité d'emprunt estimée", type: "computed", suffix: "€", sub: "Indicatif — 35% des revenus sur 25 ans à 3,5%" },
-      { key: "sourcesApport", label: "Sources d'apport", type: "sources-apport" },
+      { key: "acheteurs", label: "Acheteurs", type: "acheteurs-jai" },
+      { key: "capaciteEmpruntEstimee", label: "Capacité d'emprunt estimée", type: "computed", suffix: "€", sub: "Indicatif — 35% des revenus des acheteurs participant au prêt, sur 25 ans à 3,5%" },
+      { key: "puissanceAchat", label: "Puissance d'achat totale", type: "computed", suffix: "€", sub: "Épargne totale + capacité d'emprunt max" },
+    ],
+  },
+  "ce-que-je-mets": {
+    id: "ce-que-je-mets", title: "Ce que je mets dans le projet", icon: "📤", defaultOpen: false,
+    // Rendu par un composant dédié (CeQueJeMetsSectionCard).
+    fields: [
+      { key: "acheteurs", label: "Qui contribue au projet ?", type: "acheteurs-apport" },
       { key: "totalApport", label: "Total apport", type: "computed", suffix: "€" },
-      { key: "epargneTotaleDisponible", label: "Épargne totale disponible", suffix: "€", hint: "Épargne globale du foyer, projet compris" },
-      { key: "epargneInvestie", label: "Épargne investie dans le projet", type: "computed", suffix: "€", sub: "= Total apport" },
-      { key: "montantEmprunte", label: "Montant emprunté", suffix: "€" },
+      { key: "montantEmprunte", label: "Mon prêt immobilier — montant emprunté", suffix: "€" },
       { key: "tauxNominal", label: "Taux nominal", suffix: "%", placeholder: "3.5" },
       { key: "dureeAns", label: "Durée", suffix: "ans", placeholder: "25" },
       { key: "mensualiteHorsAssurance", label: "Mensualité hors assurance", type: "computed", suffix: "€/mois" },
@@ -1373,7 +1378,7 @@ const BUDGET_SECTIONS = {
     ],
   },
   acquisition: {
-    id: "acquisition", title: "Acquisition", icon: "🏠", defaultOpen: false,
+    id: "acquisition", title: "Ce que le projet me coûte", icon: "🏠", defaultOpen: false,
     fields: [
       { key: "prixAchat", label: "Prix d'achat", suffix: "€" },
       { key: "neuf", label: "Bien neuf (frais de notaire à 2,5% au lieu de 7,5%)", type: "checkbox" },
@@ -1385,24 +1390,15 @@ const BUDGET_SECTIONS = {
       { key: "totalAcquisition", label: "Total acquisition", type: "computed", suffix: "€" },
     ],
   },
-  "avant-emenagement": {
-    id: "avant-emenagement", title: "Avant emménagement", icon: "🎁", defaultOpen: false,
+  "apres-achat": {
+    id: "apres-achat", title: "Après l'achat", icon: "🎁", defaultOpen: false,
+    // Rendu par un composant dédié (ApresAchatSectionCard).
     fields: [
-      { key: "travauxGlobal", label: "Travaux (global)", suffix: "€" },
-      { key: "electromenager", label: "Électroménager", suffix: "€" },
-      { key: "mobilier", label: "Mobilier", suffix: "€" },
-      { key: "decoration", label: "Décoration", suffix: "€" },
-      { key: "totalAvantEmenagement", label: "Total avant emménagement", type: "computed", suffix: "€" },
-    ],
-  },
-  installation: {
-    id: "installation", title: "Installation", icon: "🔑", defaultOpen: false,
-    fields: [
-      { key: "demenagement", label: "Déménagement", suffix: "€" },
-      { key: "assuranceHabitationSetup", label: "Assurance habitation", suffix: "€" },
-      { key: "serrurerie", label: "Serrurerie", suffix: "€" },
-      { key: "petitsEquipements", label: "Petits équipements", suffix: "€" },
-      { key: "totalInstallation", label: "Total installation", type: "computed", suffix: "€" },
+      { key: "depensesApresAchat", label: "Postes de dépense", type: "depenses-apres-achat" },
+      { key: "totalApresAchat", label: "Total après l'achat", type: "computed", suffix: "€" },
+      { key: "salairesEconomises", label: "Salaires économisés", suffix: "€" },
+      { key: "primesAutres", label: "Primes / autres revenus", suffix: "€" },
+      { key: "totalEpargneAjoutee", label: "Total ajouté (épargne)", type: "computed", suffix: "€" },
     ],
   },
   "couts-recurrents": {
@@ -1452,15 +1448,6 @@ const BUDGET_SECTIONS = {
       { key: "plusValueEventuelle", label: "Plus-value éventuelle", suffix: "€" },
       { key: "exonerationRP", label: "Exonération résidence principale", type: "checkbox" },
       { key: "impotsEstimesVente", label: "Impôts estimés", suffix: "€" },
-    ],
-  },
-  "travaux-invest": {
-    id: "travaux-invest", title: "Travaux", icon: "🔨", defaultOpen: false,
-    fields: [
-      { key: "travauxImmediats", label: "Travaux immédiats", suffix: "€" },
-      { key: "travauxDifferes", label: "Travaux différés", suffix: "€" },
-      { key: "ameublementEquipement", label: "Ameublement / équipement", suffix: "€" },
-      { key: "totalTravauxInvest", label: "Total travaux", type: "computed", suffix: "€" },
     ],
   },
   revenus: {
@@ -1514,10 +1501,10 @@ const BUDGET_SECTIONS = {
 };
 
 const BUDGET_SCHEMA = {
-  achat: ["financement", "acquisition", "avant-emenagement", "installation", "couts-recurrents"],
+  achat: ["ce-que-jai", "ce-que-je-mets", "acquisition", "apres-achat", "couts-recurrents"],
   vente: ["valeur-vente", "frais-vente", "credit-existant", "fiscalite-vente"],
-  investissement: ["acquisition", "travaux-invest", "financement", "revenus", "charges-invest", "fiscalite-invest"],
-  "vente-achat": ["financement", "acquisition", "avant-emenagement", "installation", "couts-recurrents", "valeur-vente", "frais-vente", "credit-existant", "fiscalite-vente", "transition"],
+  investissement: ["ce-que-jai", "ce-que-je-mets", "acquisition", "apres-achat", "revenus", "charges-invest", "fiscalite-invest"],
+  "vente-achat": ["ce-que-jai", "ce-que-je-mets", "acquisition", "apres-achat", "couts-recurrents", "valeur-vente", "frais-vente", "credit-existant", "fiscalite-vente", "transition"],
 };
 
 function formatFieldValue(value, suffix) {
@@ -1531,15 +1518,20 @@ function formatFieldValue(value, suffix) {
 // pour une famille de projet donnée, à partir des données brutes saisies (project.budget).
 function computeBudgetDerived(family, b) {
   const d = {};
+  const inScope = family === "achat" || family === "vente-achat" || family === "investissement";
 
-  // Apport = somme des sources d'apport (multi-acheteurs) — remplace l'ancien champ
-  // manuel unique "apportPersonnel", mais alimente exactement les mêmes calculs en aval.
-  const sourcesApport = Array.isArray(b.sourcesApport) ? b.sourcesApport : [];
-  const apportPersonnel = sourcesApport.reduce((sum, s) => sum + (parseFloat(s.montant) || 0), 0);
+  // Acheteurs (multi-acheteurs) — chacun porte son épargne, ses revenus, s'il participe
+  // au prêt (filtre les revenus retenus pour la capacité d'emprunt) et son apport choisi.
+  const acheteurs = Array.isArray(b.acheteurs) ? b.acheteurs : [];
+  const epargneTotaleFoyer = acheteurs.reduce((sum, a) => sum + (parseFloat(a.epargneTotale) || 0), 0);
+  const revenusRetenusPourEmprunt = acheteurs
+    .filter(a => a.participePret !== false)
+    .reduce((sum, a) => sum + (parseFloat(a.revenusMensuels) || 0), 0);
+  const apportPersonnel = acheteurs.reduce((sum, a) => sum + (parseFloat(a.apportChoisi) || 0), 0);
+  d.epargneTotaleFoyer = epargneTotaleFoyer;
   d.totalApport = apportPersonnel;
-  d.epargneInvestie = apportPersonnel;
-  const revenusNetsMensuels = parseFloat(b.revenusNetsMensuels) || 0;
-  d.capaciteEmpruntEstimee = calcCapaciteEmprunt(revenusNetsMensuels * 0.35, 25, 3.5);
+  d.capaciteEmpruntEstimee = calcCapaciteEmprunt(revenusRetenusPourEmprunt * 0.35, 25, 3.5);
+  d.puissanceAchat = epargneTotaleFoyer + d.capaciteEmpruntEstimee;
 
   const montantEmprunte = parseFloat(b.montantEmprunte) || 0;
   const tauxNominal = parseFloat(b.tauxNominal) || 0;
@@ -1547,6 +1539,7 @@ function computeBudgetDerived(family, b) {
   const assuranceEmprunteur = parseFloat(b.assuranceEmprunteur) || 0;
   d.mensualiteHorsAssurance = (montantEmprunte > 0 && dureeAns > 0) ? calcMensualite(montantEmprunte, dureeAns, tauxNominal) : 0;
   d.coutTotalCredit = dureeAns > 0 ? Math.max(0, (d.mensualiteHorsAssurance + assuranceEmprunteur) * dureeAns * 12 - montantEmprunte) : 0;
+  d.mensualiteTotale = d.mensualiteHorsAssurance + assuranceEmprunteur;
 
   const prixAchat = parseFloat(b.prixAchat) || 0;
   const neuf = !!b.neuf;
@@ -1558,19 +1551,28 @@ function computeBudgetDerived(family, b) {
   d.totalAcquisition = prixAchat + d.fraisNotaire + fraisAgence + fraisCourtage + fraisDossierBancaire + fraisGarantiePret;
   d.montantEmprunteSuggere = Math.max(0, prixAchat - apportPersonnel);
 
+  // Après l'achat — postes de dépense libres, chacun financé par l'épargne ou par les
+  // revenus courants ; seuls ceux financés par l'épargne pèsent sur "Mon épargne restante".
+  const depensesApresAchat = Array.isArray(b.depensesApresAchat) ? b.depensesApresAchat : [];
+  d.totalApresAchat = depensesApresAchat.reduce((sum, x) => sum + (parseFloat(x.montant) || 0), 0);
+  d.totalApresAchatEpargne = depensesApresAchat
+    .filter(x => x.financePar !== "revenus")
+    .reduce((sum, x) => sum + (parseFloat(x.montant) || 0), 0);
+  d.totalApresAchatRevenus = d.totalApresAchat - d.totalApresAchatEpargne;
+
+  const salairesEconomises = parseFloat(b.salairesEconomises) || 0;
+  const primesAutres = parseFloat(b.primesAutres) || 0;
+  d.totalEpargneAjoutee = salairesEconomises + primesAutres;
+
+  if (inScope) {
+    // Tableau de bord "Ma situation nette" — remplace budgetTotal/dejaEngage/resteDisponible
+    // pour les 3 familles achat/vente-achat/investissement (la famille "vente" seule garde
+    // son ancien calcul plus bas, hors périmètre de cette refonte).
+    d.coutTotalProjet = d.totalAcquisition + d.totalApresAchat;
+    d.epargneRestante = epargneTotaleFoyer - apportPersonnel - d.totalApresAchatEpargne + d.totalEpargneAjoutee;
+  }
+
   if (family === "achat" || family === "vente-achat") {
-    const travauxGlobal = parseFloat(b.travauxGlobal) || 0;
-    const electromenager = parseFloat(b.electromenager) || 0;
-    const mobilier = parseFloat(b.mobilier) || 0;
-    const decoration = parseFloat(b.decoration) || 0;
-    d.totalAvantEmenagement = travauxGlobal + electromenager + mobilier + decoration;
-
-    const demenagement = parseFloat(b.demenagement) || 0;
-    const assuranceHabitationSetup = parseFloat(b.assuranceHabitationSetup) || 0;
-    const serrurerie = parseFloat(b.serrurerie) || 0;
-    const petitsEquipements = parseFloat(b.petitsEquipements) || 0;
-    d.totalInstallation = demenagement + assuranceHabitationSetup + serrurerie + petitsEquipements;
-
     d.mensualiteCredit = d.mensualiteHorsAssurance;
     d.assuranceEmprunteurRecurrent = assuranceEmprunteur;
     const chargesCopro = parseFloat(b.chargesCopro) || 0;
@@ -1579,9 +1581,6 @@ function computeBudgetDerived(family, b) {
     const energie = parseFloat(b.energie) || 0;
     const internet = parseFloat(b.internet) || 0;
     d.totalMensuel = d.mensualiteCredit + d.assuranceEmprunteurRecurrent + chargesCopro + taxeFonciereAnnuelle / 12 + assuranceHabitationMensuelle + energie + internet;
-
-    d.coutTotalProjet = d.totalAcquisition + d.totalAvantEmenagement + d.totalInstallation;
-    d.tresorerieRestanteApresAcquisition = (apportPersonnel + montantEmprunte) - d.coutTotalProjet;
     d.coutMensuelReelLogement = d.totalMensuel;
   }
 
@@ -1610,11 +1609,6 @@ function computeBudgetDerived(family, b) {
   }
 
   if (family === "investissement") {
-    const travauxImmediats = parseFloat(b.travauxImmediats) || 0;
-    const travauxDifferes = parseFloat(b.travauxDifferes) || 0;
-    const ameublementEquipement = parseFloat(b.ameublementEquipement) || 0;
-    d.totalTravauxInvest = travauxImmediats + travauxDifferes + ameublementEquipement;
-
     const loyerMensuel = parseFloat(b.loyerMensuel) || 0;
     const chargesRecuperables = parseFloat(b.chargesRecuperables) || 0;
     const autresRevenus = parseFloat(b.autresRevenus) || 0;
@@ -1661,22 +1655,10 @@ function computeBudgetDerived(family, b) {
     d.pctApportCouverture = d.cashNecessairePourAchat > 0 ? (d.cashDisponibleApresVente / d.cashNecessairePourAchat) * 100 : 0;
   }
 
-  if (family === "achat") {
-    d.budgetTotal = apportPersonnel + montantEmprunte;
-    d.dejaEngage = d.coutTotalProjet;
-    d.resteDisponible = d.tresorerieRestanteApresAcquisition;
-  } else if (family === "vente") {
+  if (family === "vente") {
     d.budgetTotal = parseFloat(b.prixVenteEstime) || 0;
     d.dejaEngage = d.coutTotalVente + (b.exonerationRP ? 0 : (parseFloat(b.impotsEstimesVente) || 0));
     d.resteDisponible = d.netVendeur;
-  } else if (family === "investissement") {
-    d.budgetTotal = apportPersonnel + montantEmprunte;
-    d.dejaEngage = d.totalAcquisition + d.totalTravauxInvest;
-    d.resteDisponible = d.budgetTotal - d.dejaEngage;
-  } else if (family === "vente-achat") {
-    d.budgetTotal = d.cashDisponibleApresVente + montantEmprunte + (b.pretRelaisActif ? (parseFloat(b.pretRelaisMontant) || 0) : 0);
-    d.dejaEngage = d.coutTotalProjet + d.coutTotalVente;
-    d.resteDisponible = d.epargneRestanteApresOperation;
   }
 
   return d;
@@ -1702,8 +1684,6 @@ function getBudgetAlert(family, b, d) {
 function getBudgetIndicators(family, d) {
   if (family === "achat") {
     return [
-      { label: "Coût total du projet", value: fmt(d.coutTotalProjet) },
-      { label: "Trésorerie restante après acquisition", value: fmt(d.tresorerieRestanteApresAcquisition) },
       { label: "Coût mensuel réel du logement", value: `${fmt(d.coutMensuelReelLogement)}/mois` },
     ];
   }
@@ -2117,14 +2097,27 @@ async function generateProjectPDF(project) {
     };
 
     const derived = computeBudgetDerived(budgetFamily, b);
-    const alert = getBudgetAlert(budgetFamily, b, derived);
+    const inScopePdf = budgetFamily === "achat" || budgetFamily === "vente-achat" || budgetFamily === "investissement";
 
-    line(`Budget total : ${pdfAmount(derived.budgetTotal)}`, { bold: true, gap: 6 });
-    line(`Déjà engagé : ${pdfAmount(derived.dejaEngage)}`, { indent: 4 });
-    const resteColorPdf = derived.resteDisponible < 0 ? [185, 28, 28] : [4, 120, 87];
-    line(`Reste disponible : ${pdfAmount(derived.resteDisponible)}`, { bold: true, indent: 4, color: resteColorPdf });
-    const alertColorPdf = alert.level === "danger" ? [185, 28, 28] : alert.level === "warning" ? [180, 83, 9] : [71, 85, 105];
-    line(`Alerte : ${alert.label}`, { indent: 4, color: alertColorPdf });
+    if (inScopePdf) {
+      line(`Puissance d'achat : ${pdfAmount(derived.puissanceAchat)}`, { bold: true, gap: 6 });
+      line(`Coût total projet : ${pdfAmount(derived.coutTotalProjet)}`, { indent: 4 });
+      line(`Mensualité totale : ${pdfAmount(derived.mensualiteTotale)}/mois`, { indent: 4 });
+      const epargneColorPdf = derived.epargneRestante < 0 ? [185, 28, 28] : [4, 120, 87];
+      line(`Mon épargne restante : ${pdfAmount(derived.epargneRestante)}`, { bold: true, indent: 4, color: epargneColorPdf });
+      if (derived.epargneRestante < 5000) {
+        const alertColorPdf = derived.epargneRestante < 0 ? [185, 28, 28] : [180, 83, 9];
+        line("Alerte : Attention, épargne insuffisante", { indent: 4, color: alertColorPdf });
+      }
+    } else {
+      const alert = getBudgetAlert(budgetFamily, b, derived);
+      line(`Budget total : ${pdfAmount(derived.budgetTotal)}`, { bold: true, gap: 6 });
+      line(`Déjà engagé : ${pdfAmount(derived.dejaEngage)}`, { indent: 4 });
+      const resteColorPdf = derived.resteDisponible < 0 ? [185, 28, 28] : [4, 120, 87];
+      line(`Reste disponible : ${pdfAmount(derived.resteDisponible)}`, { bold: true, indent: 4, color: resteColorPdf });
+      const alertColorPdf = alert.level === "danger" ? [185, 28, 28] : alert.level === "warning" ? [180, 83, 9] : [71, 85, 105];
+      line(`Alerte : ${alert.label}`, { indent: 4, color: alertColorPdf });
+    }
     y += 2;
 
     (BUDGET_SCHEMA[budgetFamily] || []).forEach(id => {
@@ -2138,13 +2131,24 @@ async function generateProjectPDF(project) {
         } else if (f.type === "select") {
           const opt = f.options.find(o => o.value === b[f.key]);
           if (opt) line(`${f.label} : ${opt.label}`, { indent: 4 });
-        } else if (f.type === "sources-apport") {
-          const sources = Array.isArray(b[f.key]) ? b[f.key] : [];
-          sources.forEach(s => {
-            const montant = parseFloat(s.montant) || 0;
-            if (montant > 0) {
-              line(`${s.label || "Sans nom"} : ${pdfAmount(montant)}${s.participePret === false ? " (hors prêt)" : ""}`, { indent: 4 });
-            }
+        } else if (f.type === "acheteurs-jai") {
+          const acheteurs = Array.isArray(b[f.key]) ? b[f.key] : [];
+          acheteurs.forEach(a => {
+            const epargne = parseFloat(a.epargneTotale) || 0;
+            const revenus = parseFloat(a.revenusMensuels) || 0;
+            line(`${a.label || "Sans nom"} : épargne ${pdfAmount(epargne)}, revenus ${pdfAmount(revenus)}/mois${a.participePret === false ? " (ne participe pas au prêt)" : ""}`, { indent: 4 });
+          });
+        } else if (f.type === "acheteurs-apport") {
+          const acheteurs = Array.isArray(b[f.key]) ? b[f.key] : [];
+          acheteurs.forEach(a => {
+            const apport = parseFloat(a.apportChoisi) || 0;
+            if (apport > 0) line(`${a.label || "Sans nom"} : apport ${pdfAmount(apport)}`, { indent: 4 });
+          });
+        } else if (f.type === "depenses-apres-achat") {
+          const postes = Array.isArray(b[f.key]) ? b[f.key] : [];
+          postes.forEach(x => {
+            const montant = parseFloat(x.montant) || 0;
+            if (montant > 0) line(`${x.label || "Sans nom"} : ${pdfAmount(montant)} (${x.financePar === "revenus" ? "revenus" : "épargne"})`, { indent: 4 });
           });
         } else {
           const v = parseFloat(b[f.key]) || 0;
@@ -3321,8 +3325,17 @@ function SharedProjectScreen({ data, onCreateOwn }) {
 
   const b = data.budget || {};
   const budgetFamily = getBudgetFamily(data.type);
+  const inScopeShare = budgetFamily === "achat" || budgetFamily === "vente-achat" || budgetFamily === "investissement";
   let budgetTotal = 0, resteDisponible = 0, indicators = [];
-  if (budgetFamily !== "generic") {
+  let budgetTotalLabel = "Budget total", resteDisponibleLabel = "Reste disponible";
+  if (inScopeShare) {
+    const derived = computeBudgetDerived(budgetFamily, b);
+    budgetTotal = derived.puissanceAchat;
+    resteDisponible = derived.epargneRestante;
+    indicators = getBudgetIndicators(budgetFamily, derived);
+    budgetTotalLabel = "Puissance d'achat";
+    resteDisponibleLabel = "Mon épargne restante";
+  } else if (budgetFamily === "vente") {
     const derived = computeBudgetDerived(budgetFamily, b);
     budgetTotal = derived.budgetTotal;
     resteDisponible = derived.resteDisponible;
@@ -3405,8 +3418,8 @@ function SharedProjectScreen({ data, onCreateOwn }) {
           <Card>
             <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>💶</span> Budget</h3>
             <div className="grid grid-cols-2 gap-3 mb-2">
-              <Stat label="Budget total" value={fmt(budgetTotal)} />
-              <Stat label="Reste disponible" value={fmt(resteDisponible)} accent={resteDisponible < 0 ? "text-red-600" : "text-emerald-600"} />
+              <Stat label={budgetTotalLabel} value={fmt(budgetTotal)} />
+              <Stat label={resteDisponibleLabel} value={fmt(resteDisponible)} accent={resteDisponible < 0 ? "text-red-600" : "text-emerald-600"} />
             </div>
             {indicators.length > 0 && (
               <div className="flex flex-col gap-1.5 mt-2 pt-3 border-t border-slate-100">
@@ -3756,6 +3769,8 @@ function GenericBudgetTab({ project, onUpdate }) {
   );
 }
 
+// Ancien tableau de bord Budget total / Déjà engagé / Reste disponible — conservé tel quel
+// pour la famille "Vente" seule (hors périmètre de la refonte "Ma situation nette").
 function BudgetTopIndicators({ budgetTotal, dejaEngage, resteDisponible, alert }) {
   const ALERT_COLORS = {
     danger: { bg: "#fee2e2", color: "#b91c1c" },
@@ -3787,21 +3802,65 @@ function BudgetTopIndicators({ budgetTotal, dejaEngage, resteDisponible, alert }
   );
 }
 
-// Rendu dédié pour la section "Financement" (Achat RP, Vente+Achat, Investissement) —
-// remplace l'apport unique par des sources d'apport multi-acheteurs, ajoute l'estimation
-// de capacité d'emprunt à partir des revenus. Ne suit pas le mapping générique de champs
-// (section.fields reste néanmoins à jour pour l'export PDF).
-function FinancementSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
-  const sources = Array.isArray(b.sourcesApport) ? b.sourcesApport : [];
+// Tableau de bord "Ma situation nette" — remplace l'ancien Budget total / Déjà engagé /
+// Reste disponible pour les familles Achat RP, Vente+Achat et Investissement locatif.
+function SituationNetteCard({ puissanceAchat, coutTotalProjet, mensualiteTotale, epargneRestante }) {
+  const insuffisante = epargneRestante < 5000;
+  const danger = epargneRestante < 0;
+  const cardStyle = { border: "0.5px solid #e5e3df", background: "white" };
+  const scrollToEpargneAjoutee = () => {
+    if (typeof document === "undefined") return;
+    document.getElementById("epargne-ajoutee")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+          <div className="text-xs text-slate-400 mb-1">💰 Puissance d'achat</div>
+          <div className="text-lg font-bold text-slate-800 truncate">{fmt(puissanceAchat)}</div>
+        </div>
+        <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+          <div className="text-xs text-slate-400 mb-1">🏠 Coût total projet</div>
+          <div className="text-lg font-bold text-slate-800 truncate">{fmt(coutTotalProjet)}</div>
+        </div>
+        <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+          <div className="text-xs text-slate-400 mb-1">💳 Mensualité totale</div>
+          <div className="text-lg font-bold text-slate-800 truncate">{fmt(mensualiteTotale)}/mois</div>
+        </div>
+        <div className="rounded-2xl shadow-sm p-4" style={cardStyle}>
+          <div className="text-xs text-slate-400 mb-1">🏦 Mon épargne restante</div>
+          <div className="text-lg font-bold truncate" style={{ color: danger ? "#b91c1c" : "#1a1a2e" }}>{fmt(epargneRestante)}</div>
+        </div>
+      </div>
+      {insuffisante && (
+        <div className="rounded-2xl p-4 flex items-center justify-between gap-3 flex-wrap"
+          style={{ background: danger ? "#fee2e2" : "#fef3c7", border: `0.5px solid ${danger ? "#b91c1c" : "#b45309"}33` }}>
+          <span className="text-sm font-bold" style={{ color: danger ? "#b91c1c" : "#b45309" }}>
+            ⚠️ Attention, épargne insuffisante
+          </span>
+          <button onClick={scrollToEpargneAjoutee}
+            className="text-xs font-semibold underline flex-shrink-0" style={{ color: danger ? "#b91c1c" : "#b45309" }}>
+            Ajuster mon épargne →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const addSource = () => {
-    onSet("sourcesApport", [...sources, { id: uid(), label: "", montant: "", participePret: true }]);
+// Section 1 — "Ce que j'ai" : par acheteur, épargne totale + revenus mensuels, plus une
+// case "Participe au prêt" qui filtre les revenus retenus pour la capacité d'emprunt.
+function CeQueJaiSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
+  const acheteurs = Array.isArray(b.acheteurs) ? b.acheteurs : [];
+
+  const addAcheteur = () => {
+    onSet("acheteurs", [...acheteurs, { id: uid(), label: "", epargneTotale: "", revenusMensuels: "", participePret: true, apportChoisi: "" }]);
   };
-  const updateSource = (id, patch) => {
-    onSet("sourcesApport", sources.map(s => (s.id === id ? { ...s, ...patch } : s)));
+  const updateAcheteur = (id, patch) => {
+    onSet("acheteurs", acheteurs.map(a => (a.id === id ? { ...a, ...patch } : a)));
   };
-  const removeSource = (id) => {
-    onSet("sourcesApport", sources.filter(s => s.id !== id));
+  const removeAcheteur = (id) => {
+    onSet("acheteurs", acheteurs.filter(a => a.id !== id));
   };
 
   return (
@@ -3815,34 +3874,26 @@ function FinancementSectionCard({ section, budget: b, derived, open, onToggle, o
       {open && (
         <div className="flex flex-col gap-5 mt-4 pt-4 border-t border-slate-100">
           <div className="flex flex-col gap-3">
-            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Revenus</div>
-            <Input label="Revenus nets mensuels du foyer (avant impôts)" value={b.revenusNetsMensuels || ""}
-              onChange={v => onSet("revenusNetsMensuels", v)} type="number" suffix="€/mois" />
-            <Stat label="Capacité d'emprunt estimée" value={fmt(derived.capaciteEmpruntEstimee)}
-              sub="Indicatif — 35% des revenus sur 25 ans à 3,5%" accent="text-blue-600" />
-          </div>
-
-          <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Sources d'apport</div>
-              <button onClick={addSource} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all flex-shrink-0">
-                + Ajouter une source d'apport
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Acheteurs</div>
+              <button onClick={addAcheteur} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all flex-shrink-0">
+                + Ajouter un acheteur
               </button>
             </div>
-            {sources.length === 0 ? (
-              <p className="text-xs text-slate-400">Aucune source d'apport pour l'instant.</p>
+            {acheteurs.length === 0 ? (
+              <p className="text-xs text-slate-400">Aucun acheteur pour l'instant.</p>
             ) : (
               <div className="flex flex-col gap-3">
-                {sources.map(s => (
-                  <div key={s.id} className="flex flex-col gap-2 bg-slate-50 rounded-xl p-3">
+                {acheteurs.map(a => (
+                  <div key={a.id} className="flex flex-col gap-2 bg-slate-50 rounded-xl p-3">
                     <div className="flex items-center gap-2">
                       <input
-                        value={s.label}
-                        onChange={e => updateSource(s.id, { label: e.target.value })}
-                        placeholder="Ex : Morad, Conjoint, Donation parents…"
+                        value={a.label}
+                        onChange={e => updateAcheteur(a.id, { label: e.target.value })}
+                        placeholder="Ex : Morad, Conjoint…"
                         className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                       />
-                      <button onClick={() => removeSource(s.id)}
+                      <button onClick={() => removeAcheteur(a.id)}
                         className="text-slate-300 hover:text-red-500 text-sm w-7 h-7 flex items-center justify-center flex-shrink-0 transition-all">
                         ✕
                       </button>
@@ -3850,31 +3901,96 @@ function FinancementSectionCard({ section, budget: b, derived, open, onToggle, o
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
-                        value={s.montant}
-                        onChange={e => updateSource(s.id, { montant: e.target.value })}
-                        placeholder="Montant de l'apport"
+                        value={a.epargneTotale}
+                        onChange={e => updateAcheteur(a.id, { epargneTotale: e.target.value })}
+                        placeholder="Épargne totale disponible"
                         className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                       />
                       <span className="text-slate-400 text-sm flex-shrink-0">€</span>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={a.revenusMensuels}
+                        onChange={e => updateAcheteur(a.id, { revenusMensuels: e.target.value })}
+                        placeholder="Revenus mensuels nets"
+                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <span className="text-slate-400 text-sm flex-shrink-0">€/mois</span>
+                    </div>
                     <label className="flex items-center gap-2 text-xs text-slate-600">
-                      <input type="checkbox" checked={s.participePret !== false}
-                        onChange={e => updateSource(s.id, { participePret: e.target.checked })} />
+                      <input type="checkbox" checked={a.participePret !== false}
+                        onChange={e => updateAcheteur(a.id, { participePret: e.target.checked })} />
                       Participe au prêt
                     </label>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+          <Stat label="Capacité d'emprunt estimée" value={fmt(derived.capaciteEmpruntEstimee)}
+            sub="Indicatif — 35% des revenus des acheteurs participant au prêt, sur 25 ans à 3,5%" accent="text-blue-600" />
+          <Stat label="Puissance d'achat totale" value={fmt(derived.puissanceAchat)}
+            sub="Épargne totale + capacité d'emprunt max" accent="text-blue-600" />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Section 2 — "Ce que je mets dans le projet" : apport choisi par acheteur (distinct de
+// son épargne totale) + le prêt immobilier associé.
+function CeQueJeMetsSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
+  const acheteurs = Array.isArray(b.acheteurs) ? b.acheteurs : [];
+  const updateAcheteur = (id, patch) => {
+    onSet("acheteurs", acheteurs.map(a => (a.id === id ? { ...a, ...patch } : a)));
+  };
+
+  return (
+    <Card>
+      <button onClick={onToggle} className="w-full flex items-center justify-between text-left">
+        <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+          <span>{section.icon}</span> {section.title}
+        </h3>
+        <span className="text-slate-400 text-xs flex-shrink-0">{open ? "▲ Réduire" : "▼ Déplier"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-5 mt-4 pt-4 border-t border-slate-100">
+          <div className="flex flex-col gap-3">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Qui contribue au projet ?</div>
+            {acheteurs.length === 0 ? (
+              <p className="text-xs text-slate-400">Ajoutez d'abord un acheteur dans la section "Ce que j'ai".</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {acheteurs.map(a => {
+                  const epargneTotale = parseFloat(a.epargneTotale) || 0;
+                  const apportChoisi = parseFloat(a.apportChoisi) || 0;
+                  return (
+                    <div key={a.id} className="flex flex-col gap-2 bg-slate-50 rounded-xl p-3">
+                      <div className="text-sm font-semibold text-slate-700">{a.label || "Acheteur"}</div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          value={a.apportChoisi}
+                          onChange={e => updateAcheteur(a.id, { apportChoisi: e.target.value })}
+                          placeholder="Apport choisi"
+                          className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        />
+                        <span className="text-slate-400 text-sm flex-shrink-0">€</span>
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        Après votre apport, il vous reste {fmt(epargneTotale - apportChoisi)} d'épargne disponible
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <Stat label="Total apport" value={fmt(derived.totalApport)} accent="text-blue-600" />
-            <Input label="Épargne totale disponible" value={b.epargneTotaleDisponible || ""}
-              onChange={v => onSet("epargneTotaleDisponible", v)} type="number" suffix="€"
-              hint="Épargne globale du foyer, projet compris" />
-            <Stat label="Épargne investie dans le projet" value={fmt(derived.epargneInvestie)} sub="= Total apport" accent="text-blue-600" />
           </div>
 
           <div className="flex flex-col gap-3">
-            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Prêt</div>
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Mon prêt immobilier</div>
             <Input label="Montant emprunté" value={b.montantEmprunte || ""} onChange={v => onSet("montantEmprunte", v)}
               type="number" suffix="€" hint={`Suggestion : prix d'achat − total apport = ${fmt(derived.montantEmprunteSuggere)}`} />
             <Input label="Taux nominal" value={b.tauxNominal || ""} onChange={v => onSet("tauxNominal", v)}
@@ -3885,6 +4001,100 @@ function FinancementSectionCard({ section, budget: b, derived, open, onToggle, o
             <Input label="Assurance emprunteur" value={b.assuranceEmprunteur || ""} onChange={v => onSet("assuranceEmprunteur", v)}
               type="number" suffix="€/mois" />
             <Stat label="Coût total du crédit" value={formatFieldValue(derived.coutTotalCredit, "€")} accent="text-blue-600" />
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const FINANCE_PAR_OPTIONS = [
+  { value: "epargne", label: "💰 Mon épargne" },
+  { value: "revenus", label: "💳 Mes revenus/salaire" },
+];
+
+// Section 4 — "Après l'achat" : postes de dépense libres (travaux, mobilier…), chacun
+// financé par l'épargne ou par les revenus courants, plus l'épargne ajoutée depuis l'achat.
+function ApresAchatSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
+  const postes = Array.isArray(b.depensesApresAchat) ? b.depensesApresAchat : [];
+
+  const addPoste = () => {
+    onSet("depensesApresAchat", [...postes, { id: uid(), label: "", montant: "", financePar: "epargne" }]);
+  };
+  const updatePoste = (id, patch) => {
+    onSet("depensesApresAchat", postes.map(x => (x.id === id ? { ...x, ...patch } : x)));
+  };
+  const removePoste = (id) => {
+    onSet("depensesApresAchat", postes.filter(x => x.id !== id));
+  };
+
+  return (
+    <Card>
+      <button onClick={onToggle} className="w-full flex items-center justify-between text-left">
+        <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+          <span>{section.icon}</span> {section.title}
+        </h3>
+        <span className="text-slate-400 text-xs flex-shrink-0">{open ? "▲ Réduire" : "▼ Déplier"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-5 mt-4 pt-4 border-t border-slate-100">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Postes de dépense</div>
+              <button onClick={addPoste} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all flex-shrink-0">
+                + Ajouter un poste de dépense
+              </button>
+            </div>
+            {postes.length === 0 ? (
+              <p className="text-xs text-slate-400">Aucun poste de dépense pour l'instant.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {postes.map(x => (
+                  <div key={x.id} className="flex flex-col gap-2 bg-slate-50 rounded-xl p-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={x.label}
+                        onChange={e => updatePoste(x.id, { label: e.target.value })}
+                        placeholder="Ex : Travaux, mobilier, électroménager, déménagement, décoration…"
+                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <button onClick={() => removePoste(x.id)}
+                        className="text-slate-300 hover:text-red-500 text-sm w-7 h-7 flex items-center justify-center flex-shrink-0 transition-all">
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={x.montant}
+                        onChange={e => updatePoste(x.id, { montant: e.target.value })}
+                        placeholder="Montant"
+                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <span className="text-slate-400 text-sm flex-shrink-0">€</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {FINANCE_PAR_OPTIONS.map(opt => (
+                        <button key={opt.value} onClick={() => updatePoste(x.id, { financePar: opt.value })}
+                          className={`flex-1 text-xs font-semibold py-2 rounded-lg transition-all ${(x.financePar || "epargne") === opt.value ? "bg-blue-600 text-white" : "bg-white border border-slate-200 text-slate-500"}`}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Stat label="Total après l'achat" value={fmt(derived.totalApresAchat)} accent="text-blue-600" />
+          </div>
+
+          <div id="epargne-ajoutee" className="flex flex-col gap-3">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Épargne ajoutée depuis l'achat</div>
+            <Input label="Salaires économisés" value={b.salairesEconomises || ""} onChange={v => onSet("salairesEconomises", v)}
+              type="number" suffix="€" />
+            <Input label="Primes / autres revenus" value={b.primesAutres || ""} onChange={v => onSet("primesAutres", v)}
+              type="number" suffix="€" />
+            <Stat label="Total ajouté" value={fmt(derived.totalEpargneAjoutee)} accent="text-blue-600" />
           </div>
         </div>
       )}
@@ -3953,20 +4163,35 @@ function BudgetTab({ project, onUpdate }) {
   const alert = getBudgetAlert(family, b, derived);
   const indicators = getBudgetIndicators(family, derived);
   const sectionIds = BUDGET_SCHEMA[family] || [];
+  const inScope = family === "achat" || family === "vente-achat" || family === "investissement";
+  const SECTION_COMPONENTS = {
+    "ce-que-jai": CeQueJaiSectionCard,
+    "ce-que-je-mets": CeQueJeMetsSectionCard,
+    "apres-achat": ApresAchatSectionCard,
+  };
 
   return (
     <div className="flex flex-col gap-4">
-      <BudgetTopIndicators
-        budgetTotal={derived.budgetTotal}
-        dejaEngage={derived.dejaEngage}
-        resteDisponible={derived.resteDisponible}
-        alert={alert}
-      />
+      {inScope ? (
+        <SituationNetteCard
+          puissanceAchat={derived.puissanceAchat}
+          coutTotalProjet={derived.coutTotalProjet}
+          mensualiteTotale={derived.mensualiteTotale}
+          epargneRestante={derived.epargneRestante}
+        />
+      ) : (
+        <BudgetTopIndicators
+          budgetTotal={derived.budgetTotal}
+          dejaEngage={derived.dejaEngage}
+          resteDisponible={derived.resteDisponible}
+          alert={alert}
+        />
+      )}
 
       {sectionIds.map(id => {
         const section = BUDGET_SECTIONS[id];
         const isOpen = openSections[id] ?? section.defaultOpen;
-        const SectionComponent = id === "financement" ? FinancementSectionCard : BudgetSectionCard;
+        const SectionComponent = SECTION_COMPONENTS[id] || BudgetSectionCard;
         return (
           <SectionComponent
             key={id}
