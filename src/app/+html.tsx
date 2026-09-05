@@ -27,6 +27,8 @@ export default function Root({ children }: { children: React.ReactNode }) {
         */}
         <ScrollViewStyleReset />
 
+        <link rel="icon" href="/favicon.png" />
+
         {/* PWA — manifest et icônes */}
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#B94040" />

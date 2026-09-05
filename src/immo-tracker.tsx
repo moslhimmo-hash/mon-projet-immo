@@ -104,6 +104,11 @@ function decodeShareData(encoded) {
 // fonctions ci-dessous se comportent en no-op / erreur explicite plutôt que de planter.
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+// Google OAuth passe entièrement par Supabase (le client ID Google est configuré côté
+// dashboard Supabase, pas ici) — cette variable sert uniquement de signal côté app pour
+// savoir si le développeur a déjà mis en place l'intégration, afin d'afficher un message
+// clair plutôt que de laisser échouer silencieusement.
+const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || "";
 
 // Décode le payload d'un JWT Supabase (legacy anon/service_role) pour en lire le
 // "role" sans dépendance — renvoie null pour les nouvelles clés sb_publishable_/sb_secret_
@@ -167,7 +172,13 @@ function authErrorMessage(error) {
   if (code === "over_request_rate_limit") return "Trop de tentatives. Merci de réessayer dans quelques minutes.";
   if (code === "signup_disabled") return "Les inscriptions sont actuellement désactivées.";
   if (code === "user_banned") return "Ce compte est temporairement bloqué.";
+  if (code === "validation_failed" && msg.includes("provider is not enabled")) {
+    return "La connexion Google n'est pas encore activée pour cette app.";
+  }
   // Filet de sécurité si Supabase ne renvoie pas de code (anciennes versions, erreurs réseau…).
+  if (msg.includes("provider is not enabled") || msg.includes("Unsupported provider")) {
+    return "La connexion Google n'est pas encore activée pour cette app.";
+  }
   if (msg.includes("Invalid login credentials")) return "Email ou mot de passe incorrect.";
   if (msg.includes("already registered") || msg.includes("already exists") || msg.includes("User already registered")) {
     return "Un compte existe déjà avec cet email.";
@@ -226,13 +237,15 @@ async function sendPasswordResetEmail(email) {
   console.log("[Supabase][auth] resetPasswordForEmail OK →", email);
 }
 
-// Bouton "Continuer avec Google" retiré temporairement de AuthModal (réintégration prévue en V2.5) —
-// la fonction reste prête à être rebranchée.
 async function signInWithGoogle() {
   console.log("[Supabase][auth] signInWithGoogle →");
   if (!supabase) {
     console.error("[Supabase][auth] signInWithGoogle annulé : client non configuré.");
     throw new Error("Service d'authentification non configuré.");
+  }
+  if (!GOOGLE_CLIENT_ID) {
+    console.warn("[Supabase][auth] signInWithGoogle annulé : EXPO_PUBLIC_GOOGLE_CLIENT_ID non configuré.");
+    throw new Error("La connexion avec Google n'est pas encore configurée pour cette app.");
   }
   const { error } = await supabase.auth.signInWithOAuth({ provider: "google" });
   if (error) {
@@ -1307,6 +1320,16 @@ function calcMensualite(capital, duree, taux) {
   return capital * r / (1 - Math.pow(1 + r, -n));
 }
 
+// Inverse de calcMensualite : capital empruntable pour une mensualité cible donnée
+// (utilisé pour l'estimation indicative de la capacité d'emprunt).
+function calcCapaciteEmprunt(mensualiteMax, duree, taux) {
+  if (mensualiteMax <= 0 || duree <= 0) return 0;
+  const r = taux / 100 / 12;
+  const n = duree * 12;
+  if (r === 0) return mensualiteMax * n;
+  return mensualiteMax * (1 - Math.pow(1 + r, -n)) / r;
+}
+
 // ─── MOTEUR BUDGÉTAIRE DYNAMIQUE ────────────────────────────────────────────────
 // Un même jeu de sections/champs est partagé entre les familles de projet qui en
 // ont besoin (ex : "Acquisition" et "Financement" sont identiques pour l'achat RP
@@ -1332,8 +1355,15 @@ const REGIME_FISCAL_OPTIONS = [
 const BUDGET_SECTIONS = {
   financement: {
     id: "financement", title: "Financement", icon: "💰", defaultOpen: false,
+    // Rendu par un composant dédié (FinancementSectionCard) plutôt que le mapping
+    // générique de champs — ce tableau reste la source de vérité pour l'export PDF.
     fields: [
-      { key: "apportPersonnel", label: "Apport personnel", suffix: "€", hint: "Votre épargne investie directement" },
+      { key: "revenusNetsMensuels", label: "Revenus nets mensuels du foyer (avant impôts)", suffix: "€/mois" },
+      { key: "capaciteEmpruntEstimee", label: "Capacité d'emprunt estimée", type: "computed", suffix: "€", sub: "Indicatif — 35% des revenus sur 25 ans à 3,5%" },
+      { key: "sourcesApport", label: "Sources d'apport", type: "sources-apport" },
+      { key: "totalApport", label: "Total apport", type: "computed", suffix: "€" },
+      { key: "epargneTotaleDisponible", label: "Épargne totale disponible", suffix: "€", hint: "Épargne globale du foyer, projet compris" },
+      { key: "epargneInvestie", label: "Épargne investie dans le projet", type: "computed", suffix: "€", sub: "= Total apport" },
       { key: "montantEmprunte", label: "Montant emprunté", suffix: "€" },
       { key: "tauxNominal", label: "Taux nominal", suffix: "%", placeholder: "3.5" },
       { key: "dureeAns", label: "Durée", suffix: "ans", placeholder: "25" },
@@ -1502,7 +1532,15 @@ function formatFieldValue(value, suffix) {
 function computeBudgetDerived(family, b) {
   const d = {};
 
-  const apportPersonnel = parseFloat(b.apportPersonnel) || 0;
+  // Apport = somme des sources d'apport (multi-acheteurs) — remplace l'ancien champ
+  // manuel unique "apportPersonnel", mais alimente exactement les mêmes calculs en aval.
+  const sourcesApport = Array.isArray(b.sourcesApport) ? b.sourcesApport : [];
+  const apportPersonnel = sourcesApport.reduce((sum, s) => sum + (parseFloat(s.montant) || 0), 0);
+  d.totalApport = apportPersonnel;
+  d.epargneInvestie = apportPersonnel;
+  const revenusNetsMensuels = parseFloat(b.revenusNetsMensuels) || 0;
+  d.capaciteEmpruntEstimee = calcCapaciteEmprunt(revenusNetsMensuels * 0.35, 25, 3.5);
+
   const montantEmprunte = parseFloat(b.montantEmprunte) || 0;
   const tauxNominal = parseFloat(b.tauxNominal) || 0;
   const dureeAns = parseFloat(b.dureeAns) || 0;
@@ -1518,6 +1556,7 @@ function computeBudgetDerived(family, b) {
   const fraisDossierBancaire = parseFloat(b.fraisDossierBancaire) || 0;
   const fraisGarantiePret = parseFloat(b.fraisGarantiePret) || 0;
   d.totalAcquisition = prixAchat + d.fraisNotaire + fraisAgence + fraisCourtage + fraisDossierBancaire + fraisGarantiePret;
+  d.montantEmprunteSuggere = Math.max(0, prixAchat - apportPersonnel);
 
   if (family === "achat" || family === "vente-achat") {
     const travauxGlobal = parseFloat(b.travauxGlobal) || 0;
@@ -1544,7 +1583,6 @@ function computeBudgetDerived(family, b) {
     d.coutTotalProjet = d.totalAcquisition + d.totalAvantEmenagement + d.totalInstallation;
     d.tresorerieRestanteApresAcquisition = (apportPersonnel + montantEmprunte) - d.coutTotalProjet;
     d.coutMensuelReelLogement = d.totalMensuel;
-    d.epargneRestante = apportPersonnel - Math.max(0, d.coutTotalProjet - montantEmprunte);
   }
 
   if (family === "vente" || family === "vente-achat") {
@@ -1667,7 +1705,6 @@ function getBudgetIndicators(family, d) {
       { label: "Coût total du projet", value: fmt(d.coutTotalProjet) },
       { label: "Trésorerie restante après acquisition", value: fmt(d.tresorerieRestanteApresAcquisition) },
       { label: "Coût mensuel réel du logement", value: `${fmt(d.coutMensuelReelLogement)}/mois` },
-      { label: "Épargne restante", value: fmt(d.epargneRestante), alert: d.epargneRestante < 10000 },
     ];
   }
   if (family === "vente") {
@@ -2101,6 +2138,14 @@ async function generateProjectPDF(project) {
         } else if (f.type === "select") {
           const opt = f.options.find(o => o.value === b[f.key]);
           if (opt) line(`${f.label} : ${opt.label}`, { indent: 4 });
+        } else if (f.type === "sources-apport") {
+          const sources = Array.isArray(b[f.key]) ? b[f.key] : [];
+          sources.forEach(s => {
+            const montant = parseFloat(s.montant) || 0;
+            if (montant > 0) {
+              line(`${s.label || "Sans nom"} : ${pdfAmount(montant)}${s.participePret === false ? " (hors prêt)" : ""}`, { indent: 4 });
+            }
+          });
         } else {
           const v = parseFloat(b[f.key]) || 0;
           if (v > 0) line(`${f.label} : ${pdfFieldValue(v, f.suffix)}`, { indent: 4 });
@@ -2283,6 +2328,16 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
     }
   };
 
+  const google = async () => {
+    setError("");
+    setInfo("");
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setError(e.message || "Une erreur est survenue.");
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
@@ -2331,6 +2386,15 @@ function AuthModal({ onClose, defaultTab = "signup" }) {
               <button onClick={submit} disabled={loading}
                 className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50">
                 {loading ? "…" : tab === "signup" ? "Créer mon compte" : "Se connecter"}
+              </button>
+              <div className="flex items-center gap-2 my-1">
+                <div className="flex-1 h-px bg-slate-200" />
+                <span className="text-xs text-slate-400">ou</span>
+                <div className="flex-1 h-px bg-slate-200" />
+              </div>
+              <button onClick={google}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 transition-all">
+                Continuer avec Google
               </button>
               <button onClick={onClose}
                 className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs font-semibold transition-all">
@@ -3236,6 +3300,8 @@ function LegalScreen({ onBack }) {
 // Vue en lecture seule d'un projet reçu via ?share= — mêmes données (étapes,
 // budget, contacts, journal) que le dashboard, sans aucun moyen de modification.
 function SharedProjectScreen({ data, onCreateOwn }) {
+  const [openPhases, setOpenPhases] = useState({});
+  const togglePhase = (phase) => setOpenPhases(prev => ({ ...prev, [phase]: !prev[phase] }));
   const typeInfo = PROJECT_TYPES.find(t => t.id === data.type);
   const steps = STEPS_BY_TYPE[data.type] || [];
   const checklist = data.checklist || {};
@@ -3306,20 +3372,32 @@ function SharedProjectScreen({ data, onCreateOwn }) {
       <div className="max-w-2xl mx-auto px-5 -mt-4 pb-10 flex flex-col gap-4">
         <Card>
           <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><span>📋</span> Étapes</h3>
-          <div className="flex flex-col gap-4">
-            {Object.entries(phases).map(([phase, items]) => (
-              <div key={phase}>
-                <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">{phase}</div>
-                <div className="flex flex-col gap-1.5">
-                  {items.map(s => (
-                    <div key={s.id} className="flex items-center gap-2 text-sm">
-                      <span>{checklist[s.id] ? "✅" : "⬜"}</span>
-                      <span className={checklist[s.id] ? "text-slate-400 line-through" : "text-slate-700"}>{s.label}</span>
+          <div className="flex flex-col gap-2">
+            {Object.entries(phases).map(([phase, items]) => {
+              const phaseDone = items.filter(s => checklist[s.id]).length;
+              const isOpen = !!openPhases[phase];
+              return (
+                <div key={phase} className="border-b border-slate-100 last:border-b-0 pb-2 last:pb-0">
+                  <button onClick={() => togglePhase(phase)} className="w-full flex items-center justify-between gap-2 py-1.5 text-left">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{phase}</span>
+                    <span className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs font-semibold text-blue-600">{phaseDone}/{items.length}</span>
+                      <span className="text-xs text-slate-400 transition-transform inline-block" style={{ transform: isOpen ? "rotate(90deg)" : "none" }}>▶</span>
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="flex flex-col gap-1.5 mt-2 pl-1">
+                      {items.map(s => (
+                        <div key={s.id} className="flex items-center gap-2 text-sm">
+                          <span>{checklist[s.id] ? "✅" : "⬜"}</span>
+                          <span className={checklist[s.id] ? "text-slate-400 line-through" : "text-slate-700"}>{s.label}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
@@ -3709,6 +3787,111 @@ function BudgetTopIndicators({ budgetTotal, dejaEngage, resteDisponible, alert }
   );
 }
 
+// Rendu dédié pour la section "Financement" (Achat RP, Vente+Achat, Investissement) —
+// remplace l'apport unique par des sources d'apport multi-acheteurs, ajoute l'estimation
+// de capacité d'emprunt à partir des revenus. Ne suit pas le mapping générique de champs
+// (section.fields reste néanmoins à jour pour l'export PDF).
+function FinancementSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
+  const sources = Array.isArray(b.sourcesApport) ? b.sourcesApport : [];
+
+  const addSource = () => {
+    onSet("sourcesApport", [...sources, { id: uid(), label: "", montant: "", participePret: true }]);
+  };
+  const updateSource = (id, patch) => {
+    onSet("sourcesApport", sources.map(s => (s.id === id ? { ...s, ...patch } : s)));
+  };
+  const removeSource = (id) => {
+    onSet("sourcesApport", sources.filter(s => s.id !== id));
+  };
+
+  return (
+    <Card>
+      <button onClick={onToggle} className="w-full flex items-center justify-between text-left">
+        <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+          <span>{section.icon}</span> {section.title}
+        </h3>
+        <span className="text-slate-400 text-xs flex-shrink-0">{open ? "▲ Réduire" : "▼ Déplier"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-5 mt-4 pt-4 border-t border-slate-100">
+          <div className="flex flex-col gap-3">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Revenus</div>
+            <Input label="Revenus nets mensuels du foyer (avant impôts)" value={b.revenusNetsMensuels || ""}
+              onChange={v => onSet("revenusNetsMensuels", v)} type="number" suffix="€/mois" />
+            <Stat label="Capacité d'emprunt estimée" value={fmt(derived.capaciteEmpruntEstimee)}
+              sub="Indicatif — 35% des revenus sur 25 ans à 3,5%" accent="text-blue-600" />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Sources d'apport</div>
+              <button onClick={addSource} className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-all flex-shrink-0">
+                + Ajouter une source d'apport
+              </button>
+            </div>
+            {sources.length === 0 ? (
+              <p className="text-xs text-slate-400">Aucune source d'apport pour l'instant.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {sources.map(s => (
+                  <div key={s.id} className="flex flex-col gap-2 bg-slate-50 rounded-xl p-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={s.label}
+                        onChange={e => updateSource(s.id, { label: e.target.value })}
+                        placeholder="Ex : Morad, Conjoint, Donation parents…"
+                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <button onClick={() => removeSource(s.id)}
+                        className="text-slate-300 hover:text-red-500 text-sm w-7 h-7 flex items-center justify-center flex-shrink-0 transition-all">
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={s.montant}
+                        onChange={e => updateSource(s.id, { montant: e.target.value })}
+                        placeholder="Montant de l'apport"
+                        className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                      <span className="text-slate-400 text-sm flex-shrink-0">€</span>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <input type="checkbox" checked={s.participePret !== false}
+                        onChange={e => updateSource(s.id, { participePret: e.target.checked })} />
+                      Participe au prêt
+                    </label>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Stat label="Total apport" value={fmt(derived.totalApport)} accent="text-blue-600" />
+            <Input label="Épargne totale disponible" value={b.epargneTotaleDisponible || ""}
+              onChange={v => onSet("epargneTotaleDisponible", v)} type="number" suffix="€"
+              hint="Épargne globale du foyer, projet compris" />
+            <Stat label="Épargne investie dans le projet" value={fmt(derived.epargneInvestie)} sub="= Total apport" accent="text-blue-600" />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Prêt</div>
+            <Input label="Montant emprunté" value={b.montantEmprunte || ""} onChange={v => onSet("montantEmprunte", v)}
+              type="number" suffix="€" hint={`Suggestion : prix d'achat − total apport = ${fmt(derived.montantEmprunteSuggere)}`} />
+            <Input label="Taux nominal" value={b.tauxNominal || ""} onChange={v => onSet("tauxNominal", v)}
+              type="number" suffix="%" placeholder="3.5" />
+            <Input label="Durée" value={b.dureeAns || ""} onChange={v => onSet("dureeAns", v)}
+              type="number" suffix="ans" placeholder="25" />
+            <Stat label="Mensualité hors assurance" value={formatFieldValue(derived.mensualiteHorsAssurance, "€/mois")} accent="text-blue-600" />
+            <Input label="Assurance emprunteur" value={b.assuranceEmprunteur || ""} onChange={v => onSet("assuranceEmprunteur", v)}
+              type="number" suffix="€/mois" />
+            <Stat label="Coût total du crédit" value={formatFieldValue(derived.coutTotalCredit, "€")} accent="text-blue-600" />
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function BudgetSectionCard({ section, budget, derived, open, onToggle, onSet }) {
   return (
     <Card>
@@ -3783,8 +3966,9 @@ function BudgetTab({ project, onUpdate }) {
       {sectionIds.map(id => {
         const section = BUDGET_SECTIONS[id];
         const isOpen = openSections[id] ?? section.defaultOpen;
+        const SectionComponent = id === "financement" ? FinancementSectionCard : BudgetSectionCard;
         return (
-          <BudgetSectionCard
+          <SectionComponent
             key={id}
             section={section}
             budget={b}
