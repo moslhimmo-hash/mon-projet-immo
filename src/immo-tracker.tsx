@@ -3804,13 +3804,18 @@ function BudgetTopIndicators({ budgetTotal, dejaEngage, resteDisponible, alert }
 
 // Tableau de bord "Ma situation nette" — remplace l'ancien Budget total / Déjà engagé /
 // Reste disponible pour les familles Achat RP, Vente+Achat et Investissement locatif.
-function SituationNetteCard({ puissanceAchat, coutTotalProjet, mensualiteTotale, epargneRestante }) {
+function SituationNetteCard({ puissanceAchat, coutTotalProjet, mensualiteTotale, epargneRestante, epargneAjouteeRef }) {
   const insuffisante = epargneRestante < 5000;
   const danger = epargneRestante < 0;
   const cardStyle = { border: "0.5px solid #e5e3df", background: "white" };
   const scrollToEpargneAjoutee = () => {
-    if (typeof document === "undefined") return;
-    document.getElementById("epargne-ajoutee")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (epargneAjouteeRef?.current) {
+      epargneAjouteeRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (typeof window !== "undefined") {
+      // Repli si le bloc "Épargne ajoutée" n'est pas monté (section repliée) — on descend
+      // en bas de page plutôt que de ne rien faire.
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    }
   };
   return (
     <div className="flex flex-col gap-3">
@@ -4015,7 +4020,7 @@ const FINANCE_PAR_OPTIONS = [
 
 // Section 4 — "Après l'achat" : postes de dépense libres (travaux, mobilier…), chacun
 // financé par l'épargne ou par les revenus courants, plus l'épargne ajoutée depuis l'achat.
-function ApresAchatSectionCard({ section, budget: b, derived, open, onToggle, onSet }) {
+function ApresAchatSectionCard({ section, budget: b, derived, open, onToggle, onSet, epargneAjouteeRef }) {
   const postes = Array.isArray(b.depensesApresAchat) ? b.depensesApresAchat : [];
 
   const addPoste = () => {
@@ -4088,7 +4093,7 @@ function ApresAchatSectionCard({ section, budget: b, derived, open, onToggle, on
             <Stat label="Total après l'achat" value={fmt(derived.totalApresAchat)} accent="text-blue-600" />
           </div>
 
-          <div id="epargne-ajoutee" className="flex flex-col gap-3">
+          <div id="epargne-ajoutee" ref={epargneAjouteeRef} className="flex flex-col gap-3">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wide">Épargne ajoutée depuis l'achat</div>
             <Input label="Salaires économisés" value={b.salairesEconomises || ""} onChange={v => onSet("salairesEconomises", v)}
               type="number" suffix="€" />
@@ -4148,6 +4153,7 @@ function BudgetSectionCard({ section, budget, derived, open, onToggle, onSet }) 
 function BudgetTab({ project, onUpdate }) {
   const family = getBudgetFamily(project.type);
   const [openSections, setOpenSections] = useState({});
+  const epargneAjouteeRef = useRef(null);
 
   if (family === "generic") {
     return <GenericBudgetTab project={project} onUpdate={onUpdate} />;
@@ -4178,6 +4184,7 @@ function BudgetTab({ project, onUpdate }) {
           coutTotalProjet={derived.coutTotalProjet}
           mensualiteTotale={derived.mensualiteTotale}
           epargneRestante={derived.epargneRestante}
+          epargneAjouteeRef={epargneAjouteeRef}
         />
       ) : (
         <BudgetTopIndicators
@@ -4201,6 +4208,7 @@ function BudgetTab({ project, onUpdate }) {
             open={isOpen}
             onToggle={() => toggleSection(id, section.defaultOpen)}
             onSet={set}
+            epargneAjouteeRef={id === "apres-achat" ? epargneAjouteeRef : undefined}
           />
         );
       })}
