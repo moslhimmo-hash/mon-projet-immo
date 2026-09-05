@@ -7,11 +7,11 @@
 //    (d'où la nécessité d'un Ctrl+Shift+R pour voir les projets Supabase à jour).
 // 3. Assets statiques (JS, CSS, images, fonts) : "cache first", comme avant — leur
 //    contenu est immuable (URLs versionnées par Metro), donc le cache est fiable et rapide.
-// v3 : bump du nom de cache pour forcer les visiteurs existants à purger toute réponse
-// déjà en cache pour "/favicon.png" (ex : un 404 mis en cache avant que le fichier existe),
-// et précache du favicon comme les autres icônes pour garantir qu'il soit toujours servi.
-const CACHE_NAME = "cozimo-v3";
-const PRECACHE_URLS = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.png"];
+// v4 : passage du favicon en .ico (plus universellement supporté que le .png par les
+// navigateurs) — bump du nom de cache pour purger toute ancienne réponse mise en cache
+// pour "/favicon.png" chez les visiteurs existants, et précache de "/favicon.ico".
+const CACHE_NAME = "cozimo-v4";
+const PRECACHE_URLS = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.ico"];
 const STATIC_ASSET_DESTINATIONS = ["script", "style", "image", "font"];
 
 self.addEventListener("install", (event) => {
